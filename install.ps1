@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Build Pocket Money and copy the result over the installed app.
 
@@ -27,7 +27,7 @@ $source = $PSScriptRoot
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
   ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-  Write-Host "Elevation is required to write to $Target — asking for it now." -ForegroundColor Yellow
+  Write-Host "Elevation is required to write to $Target - asking for it now." -ForegroundColor Yellow
   $argList = @("-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Target", "`"$Target`"")
   if ($SkipBuild) { $argList += "-SkipBuild" }
   Start-Process powershell -Verb RunAs -ArgumentList $argList
