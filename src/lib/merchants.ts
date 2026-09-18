@@ -200,12 +200,27 @@ for (const m of MERCHANTS) {
 // Sort longest keyword first to prefer more specific matches
 _index.sort((a, b) => b.kw.length - a.kw.length);
 
+/**
+ * Keywords are matched on word boundaries, not as bare substrings.
+ *
+ * Plain `includes()` made short keywords match inside unrelated words:
+ * "PARKING GEBUEHR" and "SHOPPING CENTER" both contain "ing " and were tagged
+ * as ING bank (and so filed under savings); "ERWERB" contains "rwe" and was
+ * tagged RWE; "Montreal" contains "real". A boundary here is any
+ * non-alphanumeric character or the start/end of the string, so "netflix.com"
+ * still matches "netflix" and "REWE-MARKT" still matches "rewe".
+ */
+const _matchers: { re: RegExp; m: MerchantInfo }[] = _index.map(({ kw, m }) => ({
+  re: new RegExp(`(^|[^a-z0-9])${kw.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i"),
+  m,
+}));
+
 /** Match a payee string to a merchant */
 export function findMerchant(payee: string): MerchantInfo | null {
   if (!payee) return null;
-  const lower = payee.toLowerCase();
-  for (const { kw, m } of _index) {
-    if (lower.includes(kw)) return m;
+  const s = String(payee);
+  for (const { re, m } of _matchers) {
+    if (re.test(s)) return m;
   }
   return null;
 }

@@ -12,77 +12,149 @@ export interface ParsedRow {
 
 export type BankFormat = "sparkasse" | "wise" | "generic";
 
-// ─── ROBUST DATE PARSER ────────────────────────────────
+/** Which component comes first in an all-numeric date. */
+export type DateOrder = "dmy" | "mdy";
+
+// ─── DATE PARSING ──────────────────────────────────────
 // Handles: dd.mm.yyyy, dd/mm/yyyy, mm/dd/yyyy, yyyy-mm-dd, yyyy/mm/dd,
-// dd-mm-yyyy, "3 Oct 2024", "Oct 3, 2024", and many more
+// dd-mm-yyyy, dd.mm.yy, "3 Oct 2024", "Oct 3, 2024", German month names.
+//
+// The day/month order of an all-numeric date is NOT guessed per row — it is
+// detected once for the whole file by detectDateOrder() and passed in, so a
+// statement cannot end up with some rows read dd/mm and others mm/dd.
 
-function tryParseDate(s: string, preferDMY: boolean): string | null {
-  if (!s || !s.trim()) return null;
-  const t = s.trim();
+const MONTHS: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4, may: 5,
+  jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+  // German
+  "jän": 1, januar: 1, februar: 2, "mär": 3, "märz": 3, mai: 5, juni: 6, juli: 7,
+  okt: 10, oktober: 10, dez: 12, dezember: 12,
+};
 
-  // ISO: yyyy-mm-dd or yyyy/mm/dd
-  let m = t.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+/** Matches an all-numeric date, capturing the three components in order. */
+const NUMERIC_DATE = /^(\d{1,4})[.\/-](\d{1,2})[.\/-](\d{2,4})/;
+
+export function tryParseDate(s: string, order: DateOrder = "dmy"): string | null {
+  if (!s || !String(s).trim()) return null;
+  // Drop any trailing time-of-day; we only ever store a calendar date.
+  const t = String(s).trim().replace(/[T\s]+\d{1,2}:\d{2}(:\d{2})?.*$/, "").trim();
+
+  // ISO first: yyyy-mm-dd or yyyy/mm/dd (unambiguous)
+  let m = t.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
   if (m) return isoDate(+m[1], +m[2], +m[3]);
 
-  // European: dd.mm.yyyy or dd/mm/yyyy or dd-mm-yyyy
-  m = t.match(/^(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{4})/);
-  if (m) {
-    if (preferDMY) return isoDate(+m[3], +m[2], +m[1]);
-    // Ambiguous US vs EU: if first > 12 it must be day (EU), else respect preferDMY
-    if (+m[1] > 12) return isoDate(+m[3], +m[2], +m[1]);
-    if (+m[2] > 12) return isoDate(+m[3], +m[1], +m[2]); // mm/dd/yyyy
-    return preferDMY ? isoDate(+m[3], +m[2], +m[1]) : isoDate(+m[3], +m[1], +m[2]);
+  // All-numeric, year last: dd.mm.yyyy / mm.dd.yyyy / dd.mm.yy
+  m = t.match(NUMERIC_DATE);
+  if (m && m[1].length <= 2) {
+    const a = +m[1], b = +m[2];
+    const year = normalizeYear(+m[3], m[3].length);
+    // An out-of-range component settles the order regardless of the file default.
+    if (a > 12 && b <= 12) return isoDate(year, b, a);
+    if (b > 12 && a <= 12) return isoDate(year, a, b);
+    return order === "dmy" ? isoDate(year, b, a) : isoDate(year, a, b);
   }
 
-  // Short year: dd.mm.yy or dd/mm/yy
-  m = t.match(/^(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{2})$/);
-  if (m) {
-    const year = +m[3] + (+m[3] > 50 ? 1900 : 2000);
-    if (preferDMY) return isoDate(year, +m[2], +m[1]);
-    if (+m[1] > 12) return isoDate(year, +m[2], +m[1]);
-    return preferDMY ? isoDate(year, +m[2], +m[1]) : isoDate(year, +m[1], +m[2]);
-  }
+  // Named month: "3 Oct 2024", "Oct 3, 2024", "3. März 2024"
+  const lower = t.toLowerCase().replace(/[,.]/g, " ").replace(/\s+/g, " ").trim();
+  m = lower.match(/^(\d{1,2})\s+([a-zäöü]+)\s+(\d{2,4})$/);
+  if (m && MONTHS[m[2]]) return isoDate(normalizeYear(+m[3], m[3].length), MONTHS[m[2]], +m[1]);
+  m = lower.match(/^([a-zäöü]+)\s+(\d{1,2})\s+(\d{2,4})$/);
+  if (m && MONTHS[m[1]]) return isoDate(normalizeYear(+m[3], m[3].length), MONTHS[m[1]], +m[2]);
 
-  // Named month: "3 Oct 2024", "Oct 3, 2024", "October 3 2024", etc.
-  const MONTHS: Record<string, number> = {
-    jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,
-    jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,sept:9,september:9,
-    oct:10,october:10,nov:11,november:11,dec:12,december:12,
-    // German
-    jän:1,januar:1,februar:2,mär:3,märz:3,mai:5,juni:6,juli:7,
-    okt:10,oktober:10,dez:12,dezember:12,
-  };
-  const lower = t.toLowerCase().replace(/[,\.]/g, " ").replace(/\s+/g, " ").trim();
-  // "3 oct 2024" or "oct 3 2024"
-  m = lower.match(/^(\d{1,2})\s+([a-zäö]+)\s+(\d{4})$/);
-  if (m && MONTHS[m[2]]) return isoDate(+m[3], MONTHS[m[2]], +m[1]);
-  m = lower.match(/^([a-zäö]+)\s+(\d{1,2})\s+(\d{4})$/);
-  if (m && MONTHS[m[1]]) return isoDate(+m[3], MONTHS[m[1]], +m[2]);
-
-  // Last resort: use JS Date constructor
+  // Last resort: the JS Date parser, read back with LOCAL getters.
+  // (toISOString() here would shift the day by one for most of Europe.)
   const d = new Date(t);
   if (!isNaN(d.getTime()) && d.getFullYear() > 1990 && d.getFullYear() < 2100) {
-    return d.toISOString().slice(0, 10);
+    return isoDate(d.getFullYear(), d.getMonth() + 1, d.getDate());
   }
 
   return null;
 }
 
+function normalizeYear(y: number, digits: number): number {
+  if (digits > 2) return y;
+  return y + (y > 50 ? 1900 : 2000);
+}
+
 function isoDate(y: number, m: number, d: number): string | null {
-  if (m < 1 || m > 12 || d < 1 || d > 31 || y < 1990 || y > 2100) return null;
+  if (m < 1 || m > 12 || d < 1 || y < 1990 || y > 2100) return null;
+  // Reject impossible days (31 Feb, 31 Apr, non-leap 29 Feb).
+  if (d > new Date(y, m, 0).getDate()) return null;
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-function parseGermanNumber(s: string): number {
-  if (!s) return 0;
-  const cleaned = String(s).replace(/\./g, "").replace(",", ".").replace(/[^\d.\-+]/g, "");
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : n;
+/**
+ * Decide dd/mm vs mm/dd for a whole file by looking for rows where one
+ * component exceeds 12 and therefore must be the day (or must be the month).
+ * Falls back to dmy, which is right for every European export this app targets.
+ */
+export function detectDateOrder(samples: string[]): { order: DateOrder; confident: boolean } {
+  let dmy = 0, mdy = 0;
+  for (const s of samples) {
+    const m = String(s || "").trim().match(NUMERIC_DATE);
+    if (!m || m[1].length > 2) continue;
+    const a = +m[1], b = +m[2];
+    if (a > 12 && b <= 12) dmy++;
+    else if (b > 12 && a <= 12) mdy++;
+  }
+  if (dmy && !mdy) return { order: "dmy", confident: true };
+  if (mdy && !dmy) return { order: "mdy", confident: true };
+  if (dmy || mdy) return { order: dmy >= mdy ? "dmy" : "mdy", confident: false };
+  return { order: "dmy", confident: false };
 }
 
-// ─── SPARKASSE COLUMN NAMES ────────────────────────────
-// The Sparkasse CSV has varying column names depending on export version
-const SPARKASSE_DATE_COLS = ["Valutadatum", "Buchungstag", "Wertstellungstag"];
+// ─── AMOUNT PARSING ────────────────────────────────────
+
+/**
+ * Parse a monetary string written in ANY common locale.
+ *
+ * The decimal separator is whichever of "." and "," appears last; when only one
+ * separator is present and exactly three digits follow it, it is read as a
+ * thousands separator ("1.234" -> 1234), since money is not written to three
+ * decimal places. Handles leading/trailing minus and accounting parentheses.
+ */
+export function parseAmount(s: unknown): number {
+  if (s == null) return 0;
+  const t = String(s).trim();
+  if (!t) return 0;
+
+  const negative = /^\(.*\)$/.test(t) || /^-/.test(t) || /-\s*$/.test(t);
+  const cleaned = t.replace(/[^\d.,]/g, "");
+  if (!cleaned) return 0;
+
+  const dots = (cleaned.match(/\./g) || []).length;
+  const commas = (cleaned.match(/,/g) || []).length;
+  const lastDot = cleaned.lastIndexOf(".");
+  const lastComma = cleaned.lastIndexOf(",");
+
+  let normalized = cleaned;
+  if (dots && commas) {
+    normalized = lastDot > lastComma
+      ? cleaned.replace(/,/g, "")                       // 1,234.56
+      : cleaned.replace(/\./g, "").replace(",", ".");   // 1.234,56
+  } else if (dots > 1) {
+    normalized = cleaned.replace(/\./g, "");            // 1.234.567
+  } else if (commas > 1) {
+    normalized = cleaned.replace(/,/g, "");             // 1,234,567
+  } else if (dots === 1) {
+    const after = cleaned.length - lastDot - 1;
+    normalized = after === 3 ? cleaned.replace(".", "") : cleaned;
+  } else if (commas === 1) {
+    const after = cleaned.length - lastComma - 1;
+    normalized = after === 3 ? cleaned.replace(",", "") : cleaned.replace(",", ".");
+  }
+
+  const n = parseFloat(normalized);
+  if (isNaN(n)) return 0;
+  return negative ? -Math.abs(n) : n;
+}
+
+// ─── COLUMN NAMES ──────────────────────────────────────
+// Sparkasse CSV-CAMT column names vary by export version.
+// Valutadatum (value date) is preferred: it is the day the money actually
+// moved, not the day the bank got round to booking it.
+const SPARKASSE_DATE_COLS = ["Valutadatum", "Wertstellungstag", "Wertstellung", "Buchungstag", "Buchungsdatum"];
 const SPARKASSE_PAYEE_COLS = [
   "Beguenstigter/Zahlungspflichtiger", "Begünstigter/Zahlungspflichtiger",
   "Beguenstigter", "Begünstigter", "Zahlungsempfaenger", "Zahlungsempfänger",
@@ -90,87 +162,181 @@ const SPARKASSE_PAYEE_COLS = [
 ];
 const SPARKASSE_DESC_COLS = ["Verwendungszweck", "Buchungstext"];
 const SPARKASSE_AMOUNT_COLS = ["Betrag", "Betrag (EUR)", "Umsatz"];
+/** "S" = Soll (debit), "H" = Haben (credit) — some exports put the sign here. */
+const SPARKASSE_SIGN_COLS = ["Soll/Haben-Kennzeichen", "Soll/Haben", "S/H"];
+
+const GENERIC_DATE_COLS = ["Date", "date", "DATE", "Valutadatum", "Buchungstag", "Transaction Date", "Datum", "Booking Date", "Completed Date"];
+const GENERIC_PAYEE_COLS = ["Payee", "payee", "Merchant", "Name", "Beguenstigter", "Begünstigter", "Counterparty", "To", "Beneficiary"];
+const GENERIC_DESC_COLS = ["Description", "description", "Memo", "Verwendungszweck", "Reference", "Notes", "Details"];
+const GENERIC_AMOUNT_COLS = ["Amount", "amount", "Betrag", "Value"];
 
 function findCol(row: Record<string, string>, candidates: string[]): string {
   for (const c of candidates) {
-    if (row[c] !== undefined && row[c] !== "") return row[c];
+    if (row[c] !== undefined && String(row[c]).trim() !== "") return String(row[c]);
   }
   return "";
 }
 
-// ─── MAIN PARSER ───────────────────────────────────────
-export async function parseCSV(file: File, format: BankFormat): Promise<ParsedRow[]> {
-  const text = await file.text();
-  const delimiter = format === "sparkasse" ? ";" : undefined; // auto-detect for others
-  const parsed = Papa.parse<Record<string, string>>(text, {
-    header: true,
-    delimiter,
-    skipEmptyLines: true,
-    transformHeader: (h) => h.trim().replace(/^"|"$/g, "").replace(/^\uFEFF/, ""), // strip BOM
-  });
-
-  const preferDMY = format === "sparkasse" || format === "generic"; // German/EU = day first
-  const rows: ParsedRow[] = [];
-
-  for (const r of parsed.data) {
-    if (!r || typeof r !== "object") continue;
-    let dateStr = "", payee = "", desc = "", amountStr = "";
-
-    if (format === "sparkasse") {
-      // Prefer Valutadatum (actual transaction date), fallback to Buchungstag
-      dateStr = findCol(r, SPARKASSE_DATE_COLS);
-      payee = findCol(r, SPARKASSE_PAYEE_COLS);
-      desc = findCol(r, SPARKASSE_DESC_COLS);
-      amountStr = findCol(r, SPARKASSE_AMOUNT_COLS);
-    } else if (format === "wise") {
-      dateStr = r["Date"] || r["Created on"] || "";
-      desc = r["Description"] || r["Reference"] || "";
-      payee = r["Payee Name"] || r["Merchant"] || r["Target name"] || "";
-      amountStr = r["Amount"] || r["Source amount (after fees)"] || "0";
-    } else {
-      // Generic: try all common column names
-      dateStr = r["Date"] || r["date"] || r["Valutadatum"] || r["Buchungstag"] || r["Transaction Date"] || "";
-      payee = r["Payee"] || r["payee"] || r["Merchant"] || r["Name"] || r["Beguenstigter"] || "";
-      desc = r["Description"] || r["description"] || r["Memo"] || r["Verwendungszweck"] || r["Reference"] || "";
-      amountStr = r["Amount"] || r["amount"] || r["Betrag"] || r["Value"] || "0";
-    }
-
-    const date = tryParseDate(dateStr, preferDMY);
-    if (!date) continue;
-
-    const amount = format === "wise"
-      ? parseFloat(String(amountStr).replace(/,/g, "")) || 0
-      : parseGermanNumber(amountStr);
-
-    rows.push({ date, amount, payee: payee.trim(), description: desc.trim(), raw: r });
-  }
-
-  return rows;
+/** The first candidate column actually present in the parsed header. */
+function whichCol(headers: string[], candidates: string[]): string | null {
+  for (const c of candidates) if (headers.includes(c)) return c;
+  return null;
 }
 
-/** Get a preview of first few rows and detected columns from a CSV */
-export async function previewCSV(file: File, format: BankFormat): Promise<{
+export function columnsFor(format: BankFormat) {
+  if (format === "sparkasse") {
+    return { date: SPARKASSE_DATE_COLS, payee: SPARKASSE_PAYEE_COLS, desc: SPARKASSE_DESC_COLS, amount: SPARKASSE_AMOUNT_COLS };
+  }
+  if (format === "wise") {
+    return {
+      date: ["Date", "Created on", "Finished on"],
+      payee: ["Payee Name", "Merchant", "Target name", "Recipient"],
+      desc: ["Description", "Reference", "Payment Reference"],
+      amount: ["Amount", "Source amount (after fees)", "Target amount"],
+    };
+  }
+  return { date: GENERIC_DATE_COLS, payee: GENERIC_PAYEE_COLS, desc: GENERIC_DESC_COLS, amount: GENERIC_AMOUNT_COLS };
+}
+
+const HEADER_TRANSFORM = (h: string) => h.trim().replace(/^﻿/, "").replace(/^"|"$/g, "");
+
+function delimiterFor(format: BankFormat) {
+  return format === "sparkasse" ? ";" : undefined; // auto-detect for others
+}
+
+// ─── MAIN PARSER ───────────────────────────────────────
+
+export interface ParseOptions {
+  /** Override the detected day/month order. */
+  dateOrder?: DateOrder;
+}
+
+export interface ParseResult {
+  rows: ParsedRow[];
+  /** Rows the parser had to drop, with the reason — surfaced in the wizard. */
+  skipped: { line: number; reason: string }[];
+  dateOrder: DateOrder;
+}
+
+export async function parseCSV(file: File, format: BankFormat, opts: ParseOptions = {}): Promise<ParseResult> {
+  const text = await file.text();
+  const parsed = Papa.parse<Record<string, string>>(text, {
+    header: true,
+    delimiter: delimiterFor(format),
+    skipEmptyLines: true,
+    transformHeader: HEADER_TRANSFORM,
+  });
+
+  const cols = columnsFor(format);
+  const data = (parsed.data || []).filter((r) => r && typeof r === "object");
+
+  // Detect the date order across the WHOLE file before parsing any single row.
+  const dateOrder = opts.dateOrder ?? detectDateOrder(data.map((r) => findCol(r, cols.date))).order;
+
+  const rows: ParsedRow[] = [];
+  const skipped: ParseResult["skipped"] = [];
+
+  data.forEach((r, i) => {
+    const dateStr = findCol(r, cols.date);
+    const payee = findCol(r, cols.payee);
+    const desc = findCol(r, cols.desc);
+    const amountStr = findCol(r, cols.amount);
+
+    const date = tryParseDate(dateStr, dateOrder);
+    if (!date) {
+      // A blank trailing row is not worth reporting.
+      if (dateStr || amountStr || payee) {
+        skipped.push({ line: i + 2, reason: dateStr ? `Unrecognised date "${dateStr}"` : "No date column found" });
+      }
+      return;
+    }
+
+    let amount = parseAmount(amountStr);
+
+    // Sparkasse may carry the direction in a separate Soll/Haben column.
+    const sign = findCol(r, SPARKASSE_SIGN_COLS).trim().toUpperCase();
+    if (sign === "S") amount = -Math.abs(amount);
+    else if (sign === "H") amount = Math.abs(amount);
+
+    // Some exports split direction across two columns instead of using a sign.
+    if (amount === 0) {
+      const out = parseAmount(r["Paid Out"]);
+      const inn = parseAmount(r["Paid In"]);
+      if (out) amount = -Math.abs(out);
+      else if (inn) amount = Math.abs(inn);
+    }
+
+    if (amount === 0) {
+      skipped.push({ line: i + 2, reason: `Could not read an amount from "${amountStr}"` });
+      return;
+    }
+
+    rows.push({ date, amount, payee: payee.trim(), description: desc.trim(), raw: r });
+  });
+
+  return { rows, skipped, dateOrder };
+}
+
+/** Preview for the import wizard: headers, first rows, and what we mapped. */
+export interface PreviewResult {
   headers: string[];
   rows: string[][];
   count: number;
-}> {
-  const text = await file.text();
-  const delimiter = format === "sparkasse" ? ";" : undefined;
-  const parsed = Papa.parse<string[]>(text, {
-    header: false,
-    delimiter,
-    skipEmptyLines: true,
-    preview: 6, // first 6 lines (header + 5 data rows)
-  });
-  const data = parsed.data.filter(r => r && r.length > 1);
-  const headers = data[0] || [];
-  const rows = data.slice(1, 6);
-  const fullParsed = Papa.parse(text, { header: false, skipEmptyLines: true, delimiter });
-  return { headers: headers.map(h => h.replace(/^\uFEFF/, "").trim()), rows, count: fullParsed.data.length - 1 };
+  mapping: { date: string | null; payee: string | null; desc: string | null; amount: string | null };
+  dateOrder: DateOrder;
+  dateOrderConfident: boolean;
+  sampleDates: { raw: string; parsed: string | null }[];
 }
 
-export function rowHash(r: { date: string; amount: number; payee: string }) {
-  return `${r.date}|${r.amount.toFixed(2)}|${(r.payee || "").trim().toLowerCase()}`;
+export async function previewCSV(file: File, format: BankFormat, opts: ParseOptions = {}): Promise<PreviewResult> {
+  const text = await file.text();
+
+  // One header-mode parse gives us the mapping, the sample rows and the count,
+  // so the file is not parsed twice as it was before.
+  const keyed = Papa.parse<Record<string, string>>(text, {
+    header: true,
+    delimiter: delimiterFor(format),
+    skipEmptyLines: true,
+    transformHeader: HEADER_TRANSFORM,
+  });
+  const headers = (keyed.meta.fields || []).map(HEADER_TRANSFORM);
+  const data = (keyed.data || []).filter((r) => r && typeof r === "object");
+
+  const cols = columnsFor(format);
+  const mapping = {
+    date: whichCol(headers, cols.date),
+    payee: whichCol(headers, cols.payee),
+    desc: whichCol(headers, cols.desc),
+    amount: whichCol(headers, cols.amount),
+  };
+
+  const rawDates = data.map((r) => findCol(r, cols.date));
+  const detected = detectDateOrder(rawDates);
+  const dateOrder = opts.dateOrder ?? detected.order;
+
+  return {
+    headers,
+    rows: data.slice(0, 5).map((r) => headers.map((h) => String(r[h] ?? ""))),
+    count: data.length,
+    mapping,
+    dateOrder,
+    dateOrderConfident: detected.confident,
+    sampleDates: rawDates.filter(Boolean).slice(0, 5).map((raw) => ({ raw, parsed: tryParseDate(raw, dateOrder) })),
+  };
+}
+
+/**
+ * Identity of a transaction for duplicate detection.
+ *
+ * Must be computed from the NORMALISED shape that gets persisted — a stored
+ * transaction keeps an unsigned amount and may have had its payee blanked by
+ * vague mode, so hashing the raw signed CSV row would never match it again.
+ */
+export function rowHash(r: { date: string; amount: number; payee: string; description?: string; isCredit?: boolean }) {
+  const cents = Math.round(Math.abs(r.amount) * 100);
+  const dir = (r.isCredit ?? r.amount > 0) ? "C" : "D";
+  const who = (r.payee || r.description || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return `${r.date}|${dir}|${cents}|${who}`;
 }
 
 export function exportTransactionsCSV(rows: Record<string, unknown>[]): string {
@@ -178,66 +344,73 @@ export function exportTransactionsCSV(rows: Record<string, unknown>[]): string {
 }
 
 // ─── MERCHANT-BASED AUTO-CATEGORIZATION ────────────────
-// When no rule matches, try to infer category from merchant database
+
+/**
+ * Infer a category from the merchant database.
+ *
+ * `isCredit` matters: a refund from a shop must not land in an expense
+ * category, or the sign gets flipped and the month swings by twice the amount.
+ */
 export function autoCategorizeMerchant(
   payee: string,
   description: string,
-  categories: Category[]
+  categories: Category[],
+  isCredit: boolean
 ): { categoryId: string; profile: ProfileId } | null {
+  // Prefer the payee field; the free-text description is far noisier.
   const merchant = findMerchant(payee) || findMerchant(description);
   if (!merchant) return null;
 
-  // Map merchant label to likely category type
-  const label = merchant.label.toLowerCase();
-  // These are heuristic guesses — user can override
-  const typeGuess = inferCategoryType(label, merchant.keywords);
-  const match = categories.find(c => c.type === typeGuess && c.profileDefault === "household")
-    || categories.find(c => c.type === typeGuess);
-  if (match) return { categoryId: match.id, profile: match.profileDefault };
-  return null;
+  if (isCredit) {
+    const income = categories.find((c) => c.type === "income");
+    return income ? { categoryId: income.id, profile: income.profileDefault } : null;
+  }
+
+  const typeGuess = inferCategoryType(merchant.label, merchant.keywords);
+  const match = categories.find((c) => c.type === typeGuess) || categories.find((c) => c.type === "expenses");
+  if (!match) return null;
+  // Let the matched category's own default decide the profile.
+  return { categoryId: match.id, profile: match.profileDefault };
 }
 
-function inferCategoryType(label: string, keywords: string[]): string {
-  const kw = keywords.join(" ") + " " + label;
-  // Subscriptions and streaming
+function inferCategoryType(label: string, keywords: string[]) {
+  const kw = `${keywords.join(" ")} ${label}`;
   if (/netflix|spotify|disney|prime|youtube|hbo|dazn|audible|crunchyroll|twitch|sky|waipu|mcfit|fitness|urban sports|john reed|clever fit|openai|chatgpt|notion|canva|github|icloud|dropbox|adobe|microsoft/i.test(kw)) return "bills";
-  // Insurance
-  if (/aok|dak|tk |barmer|ikk|hkk|krankenkasse/i.test(kw)) return "bills";
-  // Telecoms & utilities
-  if (/telekom|vodafone|o2|1und1|congstar|aldi talk|freenet|eon|vattenfall|enercity|rwe|stadtwerke|naturstrom|gez|rundfunk/i.test(kw)) return "bills";
-  // Rent
+  if (/aok|dak|techniker krankenkasse|barmer|ikk|hkk|krankenkasse/i.test(kw)) return "bills";
+  if (/telekom|vodafone|telefonica|1und1|congstar|aldi talk|freenet|e\.on|vattenfall|enercity|rwe|stadtwerke|naturstrom|gez|rundfunk/i.test(kw)) return "bills";
   if (/miete|vermieter/i.test(kw)) return "bills";
-  // Finance transfers (savings-like)
   if (/n26|ing|commerzbank|sparkasse|volksbank|dkb|wise|revolut/i.test(kw)) return "savings";
-  // Everything else is expenses (groceries, shopping, transport, food, etc.)
   return "expenses";
 }
+
+// ─── DOWNLOAD ──────────────────────────────────────────
 
 export async function downloadFile(filename: string, content: string | Blob, mime = "text/csv") {
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
   if ("showSaveFilePicker" in window) {
     try {
       const ext = filename.split(".").pop() || "";
-      const types: Record<string, any> = {
+      const types: Record<string, unknown> = {
         csv: { description: "CSV file", accept: { "text/csv": [".csv"] } },
         pdf: { description: "PDF document", accept: { "application/pdf": [".pdf"] } },
-        xlsx: { description: "Excel spreadsheet", accept: { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"] } },
       };
-      const handle = await (window as any).showSaveFilePicker({
-        suggestedName: filename,
-        types: types[ext] ? [types[ext]] : undefined,
-      });
+      const handle = await (window as unknown as { showSaveFilePicker: (o: unknown) => Promise<FileSystemFileHandle> })
+        .showSaveFilePicker({ suggestedName: filename, types: types[ext] ? [types[ext]] : undefined });
       const writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();
       return;
-    } catch (e: any) {
-      if (e.name === "AbortError") return;
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      // Any other failure falls through to the anchor-download path below.
     }
   }
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
