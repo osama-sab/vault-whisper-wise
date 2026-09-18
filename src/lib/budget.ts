@@ -1,4 +1,4 @@
-import type { Transaction, Category, Subscription, ProfileFilter } from "./types";
+import type { Transaction, Category, Subscription, ProfileFilter, Account, AccountStatement } from "./types";
 import { isInMonth } from "./format";
 
 /**
@@ -133,4 +133,123 @@ export function buildLedger(
     running = closing;
     return { month, opening, closing, recon, transactions: monthTx };
   });
+}
+
+// ─── ACCOUNTS ──────────────────────────────────────────
+//
+// Purely additive: buildLedger and reconcileMonth are untouched, so every
+// existing test keeps passing verbatim.
+
+/** The default account id created by migration for pre-accounts data. */
+export const DEFAULT_ACCOUNT_ID = "acct-main";
+
+/**
+ * Which account a transaction belongs to.
+ *
+ * accountId is optional, so anything written before accounts existed falls
+ * back to the default account (or, failing that, the first one).
+ */
+export function accountOf(t: Transaction, accounts: Account[]): Account | undefined {
+  if (t.accountId) {
+    const exact = accounts.find((a) => a.id === t.accountId);
+    if (exact) return exact;
+  }
+  return accounts.find((a) => a.id === DEFAULT_ACCOUNT_ID) ?? accounts[0];
+}
+
+/**
+ * Balance of one account, optionally as at a date (inclusive).
+ *
+ * Transactions store a POSITIVE amount and take their direction from the
+ * category, exactly as reconcileMonth does — including skipping transactions
+ * whose category has been deleted, since those are not attributable.
+ */
+export function accountBalance(
+  account: Account,
+  txs: Transaction[],
+  categories: Category[],
+  upToISO?: string
+): number {
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  let balance = account.openingBalance;
+
+  for (const t of txs) {
+    if (t.date < account.openingDate) continue;       // predates the account
+    if (upToISO && t.date > upToISO) continue;
+    if ((t.accountId ?? DEFAULT_ACCOUNT_ID) !== account.id) continue;
+    const c = catMap.get(t.categoryId);
+    if (!c) continue;
+    balance += c.type === "income" ? Math.abs(t.amount) : -Math.abs(t.amount);
+  }
+  return balance;
+}
+
+export function balancesByAccount(
+  accounts: Account[],
+  txs: Transaction[],
+  categories: Category[],
+  upToISO?: string
+): Map<string, number> {
+  return new Map(accounts.map((a) => [a.id, accountBalance(a, txs, categories, upToISO)]));
+}
+
+/** Combined balance of the given accounts the day before `beforeISO`. */
+export function openingBalanceFor(
+  accounts: Account[],
+  txs: Transaction[],
+  categories: Category[],
+  beforeISO: string,
+  accountIds?: string[]
+): number {
+  const scope = accountIds ? accounts.filter((a) => accountIds.includes(a.id)) : accounts;
+  // Exclusive of beforeISO: the opening balance is what was held going in.
+  const previousDay = isoBefore(beforeISO);
+  return scope.reduce((sum, a) => sum + accountBalance(a, txs, categories, previousDay), 0);
+}
+
+function isoBefore(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso;
+  const d = new Date(+m[1], +m[2] - 1, +m[3] - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export interface AccountReconciliation {
+  accountId: string;
+  year: number;
+  month: number;
+  /** What the app thinks the account closed at. */
+  computed: number;
+  /** What the bank says, when the user has entered it. */
+  actual: number | null;
+  delta: number;
+  reconciled: boolean;
+}
+
+/**
+ * Compare the computed closing balance against the bank's own figure.
+ *
+ * Compared with a tolerance, never with ===: accumulating floating-point
+ * amounts across a year will not land exactly on the bank's number.
+ */
+export function reconcileAccountMonth(
+  account: Account,
+  txs: Transaction[],
+  categories: Category[],
+  statement: AccountStatement | undefined,
+  tolerance = 0.005
+): AccountReconciliation {
+  const year = statement?.year ?? new Date().getFullYear();
+  const month = statement?.month ?? new Date().getMonth();
+  const lastDay = new Date(year, month + 1, 0);
+  const upTo = `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, "0")}-${String(lastDay.getDate()).padStart(2, "0")}`;
+
+  const computed = accountBalance(account, txs, categories, upTo);
+  const actual = statement?.closingBalance ?? null;
+  const delta = actual === null ? 0 : computed - actual;
+
+  return {
+    accountId: account.id, year, month, computed, actual, delta,
+    reconciled: actual !== null && Math.abs(delta) <= tolerance,
+  };
 }

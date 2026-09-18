@@ -3,6 +3,7 @@ import {
   openDocument, sealDocument, toB64, unwrapWithPassphrase, wrapWithPassphrase,
 } from "./crypto";
 import { createIO, registerShellHooks, reportDirty, type OsCrypto, type VaultIO } from "./io";
+import { idbLegacyReader, migrateLegacy, type LegacyReader, type MigrationResult } from "./migrate";
 import type { Keyring, VaultDocument, VaultStatus, WrapKind, WrapRecord } from "./types";
 
 /** A brand-new, empty document. seedIfEmpty() fills in the starter categories. */
@@ -24,6 +25,8 @@ export interface VaultDeps {
   os: OsCrypto;
   debounceMs?: number;
   maxDelayMs?: number;
+  /** Injectable so migration can be tested without a real IndexedDB. */
+  legacyReader?: LegacyReader;
 }
 
 export class Vault {
@@ -47,11 +50,16 @@ export class Vault {
   private dirty = false;
   private writing: Promise<void> = Promise.resolve();
 
+  private legacyReader: LegacyReader;
+  /** Result of the one-time migration, for the UI to report. */
+  migration: MigrationResult | null = null;
+
   constructor(deps: VaultDeps) {
     this.io = deps.io;
     this.os = deps.os;
     this.debounceMs = deps.debounceMs ?? 250;
     this.maxDelayMs = deps.maxDelayMs ?? 2000;
+    this.legacyReader = deps.legacyReader ?? idbLegacyReader();
   }
 
   // ─── LIFECYCLE ───────────────────────────────────────
@@ -66,10 +74,38 @@ export class Vault {
     this.keyring = await this.io.readKeyring();
 
     if (!this.keyring) {
-      // First run (or post-migration caller has already written one).
+      // No keyring means this install has never had a vault: either a fresh
+      // start, or data still sitting in the old plaintext IndexedDB.
       this.keyring = await this.createKeyring();
       this.dataKey = await this.unwrap(this.keyring.wrap);
-      this.document = (await this.readDocument()) ?? emptyDocument();
+
+      const existing = await this.readDocument();
+      if (existing) {
+        this.document = existing;
+        return this.status();
+      }
+
+      const result = await migrateLegacy(this.io, this.legacyReader, async (doc) => {
+        this.document = doc;
+        await this.persist();
+        // Read it back off disk through the normal load path, so verification
+        // exercises the same code the app will use every launch.
+        const reread = await this.readDocument();
+        if (!reread) throw new Error("The vault could not be read back after writing.");
+        return reread;
+      });
+      this.migration = result;
+
+      if (result.status === "failed-kept-legacy") {
+        // The old database is untouched, so fall back to it rather than
+        // leaving the user with an app that will not open.
+        await this.io.destroy().catch(() => {});
+        this.legacyFallback = true;
+        this.document = emptyDocument();
+        return this.status();
+      }
+
+      if (!this.document) this.document = emptyDocument();
       await this.persist();
       return this.status();
     }
