@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { DiscreetText } from "@/components/Discreet";
 import { CategoryIcon, MerchantLogo } from "@/components/MerchantLogo";
 import ExportDialog from "@/components/ExportDialog";
+import CashflowChart from "@/components/CashflowChart";
 
 export default function Dashboard() {
   const { transactions, categories, subscriptions, settings } = useApp();
@@ -165,6 +166,8 @@ export default function Dashboard() {
           )}
         </div>
       )}
+
+      <CashflowChart endMonth={month} />
 
       <div className="bg-card rounded-2xl border border-border p-4">
         <h2 className="font-semibold mb-3">Budgets</h2>

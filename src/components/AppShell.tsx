@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { LayoutDashboard, Receipt, Calendar, Upload, Settings as SettingsIcon, Eye, EyeOff } from "lucide-react";
+import { LayoutDashboard, Receipt, Calendar, Upload, Settings as SettingsIcon, Eye, EyeOff, Sun, Moon } from "lucide-react";
+import { useTheme } from "next-themes";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import type { ProfileFilter } from "@/lib/types";
@@ -26,6 +28,13 @@ export default function AppShell() {
   const location = useLocation();
   const showProfileBar = !hideProfileBarPaths.some((p) => location.pathname.startsWith(p));
 
+  const { resolvedTheme, setTheme } = useTheme();
+  // The resolved theme is unknown until after mount, so the icon would
+  // otherwise flip on the first paint.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const isDark = resolvedTheme === "dark";
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <header className="sticky top-0 z-30 bg-card/90 backdrop-blur border-b border-border safe-top">
@@ -34,18 +43,29 @@ export default function AppShell() {
             <img src="./pwa-192.png" alt="" className="w-7 h-7" />
             <h1 className="text-lg font-semibold tracking-tight text-primary">Pocket Money</h1>
           </div>
-          <button
-            onClick={toggleDiscreet}
-            aria-label="Toggle discreet mode"
-            className={cn(
-              "p-2 rounded-full transition-colors",
-              settings.discreetMode
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-secondary-foreground hover:bg-accent"
-            )}
-          >
-            {settings.discreetMode ? <EyeOff size={18} /> : <Eye size={18} />}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setTheme(isDark ? "light" : "dark")}
+              aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              title={isDark ? "Light mode" : "Dark mode"}
+              className="p-2 rounded-full bg-secondary text-secondary-foreground hover:bg-accent transition-colors"
+            >
+              {mounted && isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
+              onClick={toggleDiscreet}
+              aria-label="Toggle discreet mode"
+              title={settings.discreetMode ? "Show amounts" : "Hide amounts"}
+              className={cn(
+                "p-2 rounded-full transition-colors",
+                settings.discreetMode
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-secondary-foreground hover:bg-accent"
+              )}
+            >
+              {settings.discreetMode ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
         </div>
         {showProfileBar && (
           <div className="max-w-2xl mx-auto px-4 pb-3 flex gap-1.5">
