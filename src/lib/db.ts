@@ -9,20 +9,48 @@ let dbPromise: Promise<IDBPDatabase> | null = null;
 export function getDB() {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
+      // Every creation is guarded. The previous version called
+      // createObjectStore() unconditionally, which works at version 1 and
+      // throws ConstraintError on every existing install the moment
+      // DB_VERSION is raised — i.e. during the first schema change.
       upgrade(db) {
-        db.createObjectStore("categories", { keyPath: "id" });
-        const tx = db.createObjectStore("transactions", { keyPath: "id" });
-        tx.createIndex("by-date", "date");
-        tx.createIndex("by-category", "categoryId");
-        tx.createIndex("by-profile", "profile");
-        db.createObjectStore("subscriptions", { keyPath: "id" });
-        db.createObjectStore("billPayments", { keyPath: "id" });
-        db.createObjectStore("rules", { keyPath: "id" });
-        db.createObjectStore("settings", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("categories")) {
+          db.createObjectStore("categories", { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains("transactions")) {
+          const tx = db.createObjectStore("transactions", { keyPath: "id" });
+          tx.createIndex("by-date", "date");
+          tx.createIndex("by-category", "categoryId");
+          tx.createIndex("by-profile", "profile");
+        }
+        for (const name of ["subscriptions", "billPayments", "rules", "settings"]) {
+          if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "id" });
+        }
       },
     });
   }
   return dbPromise;
+}
+
+/**
+ * Close the cached connection and delete the database, waiting for the result.
+ *
+ * "Erase all local data" previously fired deleteDatabase() without closing the
+ * open connection and without awaiting it, then reloaded — so the delete was
+ * blocked by the live connection and usually did nothing at all.
+ */
+export async function deleteDatabase(): Promise<void> {
+  if (dbPromise) {
+    try { (await dbPromise).close(); } catch { /* already closed */ }
+    dbPromise = null;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(DB_NAME);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error ?? new Error("Could not delete the database"));
+    // Fires when another tab still holds the database open.
+    req.onblocked = () => resolve();
+  });
 }
 
 export const uid = (): string => {
@@ -47,11 +75,20 @@ async function del(store: string, key: string) {
   const db = await getDB();
   await db.delete(store, key);
 }
+/** Write many records in one transaction. */
+async function bulk<T>(store: string, items: T[]) {
+  if (!items.length) return;
+  const db = await getDB();
+  const tx = db.transaction(store, "readwrite");
+  await Promise.all(items.map((i) => tx.store.put(i)));
+  await tx.done;
+}
 
 // ---- Categories ----
 export const Categories = {
   all: () => all<Category>("categories"),
   put: (c: Category) => put("categories", c),
+  bulkPut: (items: Category[]) => bulk("categories", items),
   delete: (id: string) => del("categories", id),
 };
 
@@ -59,12 +96,7 @@ export const Categories = {
 export const Transactions = {
   all: () => all<Transaction>("transactions"),
   put: (t: Transaction) => put("transactions", t),
-  bulkPut: async (items: Transaction[]) => {
-    const db = await getDB();
-    const tx = db.transaction("transactions", "readwrite");
-    await Promise.all(items.map((i) => tx.store.put(i)));
-    await tx.done;
-  },
+  bulkPut: (items: Transaction[]) => bulk("transactions", items),
   delete: (id: string) => del("transactions", id),
   deleteSplitGroup: async (groupId: string) => {
     const db = await getDB();
@@ -80,18 +112,21 @@ export const Transactions = {
 export const Subscriptions = {
   all: () => all<Subscription>("subscriptions"),
   put: (s: Subscription) => put("subscriptions", s),
+  bulkPut: (items: Subscription[]) => bulk("subscriptions", items),
   delete: (id: string) => del("subscriptions", id),
 };
 
 export const BillPayments = {
   all: () => all<BillPayment>("billPayments"),
   put: (b: BillPayment) => put("billPayments", b),
+  bulkPut: (items: BillPayment[]) => bulk("billPayments", items),
   delete: (id: string) => del("billPayments", id),
 };
 
 export const Rules = {
   all: () => all<Rule>("rules"),
   put: (r: Rule) => put("rules", r),
+  bulkPut: (items: Rule[]) => bulk("rules", items),
   delete: (id: string) => del("rules", id),
 };
 

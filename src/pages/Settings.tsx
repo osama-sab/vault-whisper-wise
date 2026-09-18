@@ -7,10 +7,13 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Trash2, Sparkles } from "lucide-react";
-import { uid } from "@/lib/db";
+import { uid, deleteDatabase } from "@/lib/db";
 import { CategoryIcon } from "@/components/MerchantLogo";
 import type { CategoryType, ProfileId, Rule, Category } from "@/lib/types";
+import { applyRules } from "@/lib/rules";
+import { formatMoney, isValidCurrency, isoFromDate, profileLabel } from "@/lib/format";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 
 const TYPE_LABELS: Record<CategoryType, string> = {
   income: "Income",
@@ -22,6 +25,19 @@ const TYPE_LABELS: Record<CategoryType, string> = {
 
 export default function SettingsPage() {
   const { settings, saveSettings } = useApp();
+  // Held locally while typing. Committing on every keystroke meant a
+  // half-typed code like "E" reached Intl.NumberFormat, which throws
+  // RangeError during render and blanked the whole window.
+  const [currencyDraft, setCurrencyDraft] = useState(settings.currency);
+  const currencyValid = isValidCurrency(currencyDraft);
+
+  function commitCurrency() {
+    if (currencyValid) {
+      if (currencyDraft.toUpperCase() !== settings.currency) saveSettings({ currency: currencyDraft.toUpperCase() });
+    } else {
+      setCurrencyDraft(settings.currency); // revert an invalid entry
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -43,13 +59,23 @@ export default function SettingsPage() {
               <Switch checked={settings.discreetMode} onCheckedChange={(v) => saveSettings({ discreetMode: v })} />
             </div>
             <div>
-              <Label>Currency</Label>
+              <Label htmlFor="currency">Currency</Label>
               <Input
-                value={settings.currency}
-                onChange={(e) => saveSettings({ currency: e.target.value.toUpperCase() })}
+                id="currency"
+                value={currencyDraft}
+                maxLength={3}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => setCurrencyDraft(e.target.value.toUpperCase())}
+                onBlur={commitCurrency}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                 placeholder="EUR"
               />
-              <p className="text-[11px] text-muted-foreground mt-1">3-letter ISO code (EUR, USD, GBP, etc.)</p>
+              <p className={"text-[11px] mt-1 " + (currencyDraft && !currencyValid ? "text-destructive" : "text-muted-foreground")}>
+                {currencyDraft && !currencyValid
+                  ? `"${currencyDraft}" is not a currency code. Use three letters, such as EUR, USD or GBP.`
+                  : `3-letter ISO code. Example: ${formatMoney(1234.5, currencyValid ? currencyDraft : "EUR")}`}
+              </p>
             </div>
             <div>
               <Label>Paydays</Label>
@@ -99,10 +125,16 @@ export default function SettingsPage() {
             variant="destructive"
             className="w-full"
             onClick={async () => {
-              if (!confirm("Erase ALL local data? This cannot be undone.")) return;
-              const dbs = await indexedDB.databases?.();
-              for (const d of dbs || []) if (d.name) indexedDB.deleteDatabase(d.name);
-              location.reload();
+              if (!confirm("Erase every transaction, category, subscription and rule?\n\nThis cannot be undone. Export a backup first if you might want this data back.")) return;
+              try {
+                // Closes the open connection and waits for the delete. The old
+                // version fired deleteDatabase() without closing or awaiting,
+                // so the delete was blocked and usually did nothing.
+                await deleteDatabase();
+                location.reload();
+              } catch (e) {
+                toast.error("Could not erase the data: " + (e as Error).message);
+              }
             }}
           >
             Erase all local data
@@ -114,7 +146,7 @@ export default function SettingsPage() {
 }
 
 function CategoriesEditor() {
-  const { categories, upsertCategory, deleteCategory } = useApp();
+  const { categories, settings, upsertCategory, deleteCategory } = useApp();
   const [editing, setEditing] = useState<Category | null>(null);
 
   function newCat(profile: ProfileId, type: CategoryType) {
@@ -158,7 +190,8 @@ function CategoriesEditor() {
                         <button onClick={() => setEditing(c)} className="text-left flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{c.name}</p>
                           <p className="text-[11px] text-muted-foreground">
-                            Budget {c.monthlyBudget} {c.genericLabel ? `· "${c.genericLabel}"` : ""}
+                            {c.monthlyBudget > 0 ? `Budget ${formatMoney(c.monthlyBudget, settings.currency)}` : "No budget"}
+                            {c.genericLabel ? ` · shown as "${c.genericLabel}"` : ""}
                           </p>
                         </button>
                         <button
@@ -298,10 +331,13 @@ function RulesEditor() {
         {test && (
           <p className="text-xs text-muted-foreground">
             {(() => {
-              const m = rules.find((r) => test.toLowerCase().includes(r.keyword.toLowerCase()));
-              return m
-                ? `Matches "${m.keyword}" → ${categories.find((c) => c.id === m.categoryId)?.name} (${m.profile})`
-                : "No match — would need manual categorization";
+              // Uses the same engine the importer uses. The old test ignored
+              // both the rule's field setting and its priority, so it could
+              // report a match the importer would never make.
+              const hit = applyRules(test, test, rules);
+              if (!hit) return "No match — this would need categorising by hand.";
+              const cat = categories.find((c) => c.id === hit.categoryId);
+              return `Matches → ${cat?.name ?? "a deleted category"} · ${profileLabel(hit.profile)}`;
             })()}
           </p>
         )}
@@ -328,7 +364,7 @@ function RulesEditor() {
                   <button className="flex-1 text-left min-w-0" onClick={() => setEditing(r)}>
                     <p className="text-sm font-medium truncate">"{r.keyword}"</p>
                     <p className="text-[11px] text-muted-foreground">
-                      In {r.field} → {c?.name || "—"} · {r.profile === "household" ? "Household" : "Personal"}
+                      In {r.field} → {c?.name || "—"} · {profileLabel(r.profile)}
                     </p>
                   </button>
                   <button onClick={() => { if (confirm("Delete rule?")) deleteRule(r.id); }} className="text-muted-foreground p-1">
@@ -367,7 +403,20 @@ function RulesEditor() {
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <Label>Profile</Label>
-                <Select value={editing.profile} onValueChange={(v) => setEditing({ ...editing, profile: v as ProfileId })}>
+                <Select
+                  value={editing.profile}
+                  onValueChange={(v) => {
+                    const profile = v as ProfileId;
+                    // Drop a category that belongs to the other profile,
+                    // which would otherwise leave the Select showing blank.
+                    const stillValid = categories.some((c) => c.id === editing.categoryId && c.profileDefault === profile);
+                    setEditing({
+                      ...editing,
+                      profile,
+                      categoryId: stillValid ? editing.categoryId : (categories.find((c) => c.profileDefault === profile)?.id ?? ""),
+                    });
+                  }}
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="household">Household</SelectItem>
@@ -415,6 +464,7 @@ function RulesEditor() {
 function DataBackup() {
   const store = useApp();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
 
   async function exportBackup() {
     const data = {
@@ -424,6 +474,7 @@ function DataBackup() {
       transactions: store.transactions,
       categories: store.categories,
       subscriptions: store.subscriptions,
+      billPayments: store.billPayments,
       rules: store.rules,
       settings: store.settings,
     };
@@ -431,32 +482,42 @@ function DataBackup() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `pocket-money-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    // Local calendar date, not toISOString(), which names the file with
+    // yesterday's date late in the evening.
+    a.download = `pocket-money-backup-${isoFromDate(new Date())}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast.success("Backup saved");
   }
 
   async function importBackup(file: File) {
+    setBusy(true);
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      if (data.app !== "pocket-money" && !data.transactions) {
-        alert("This doesn't look like a Pocket Money backup file.");
+      const data = JSON.parse(await file.text());
+      if (data.app !== "pocket-money" && !Array.isArray(data.transactions)) {
+        toast.error("That does not look like a Pocket Money backup file.");
         return;
       }
-      if (!confirm(`Import ${data.transactions?.length || 0} transactions, ${data.categories?.length || 0} categories, ${data.subscriptions?.length || 0} subscriptions, and ${data.rules?.length || 0} rules?\n\nThis will ADD to your existing data (not replace it).`)) return;
+      const counts = [
+        [data.transactions?.length || 0, "transactions"],
+        [data.categories?.length || 0, "categories"],
+        [data.subscriptions?.length || 0, "subscriptions"],
+        [data.rules?.length || 0, "rules"],
+      ] as const;
+      const summary = counts.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`).join(", ");
+      if (!summary) { toast.error("That backup is empty."); return; }
+      if (!confirm(`Restore ${summary}?\n\nThis adds to your existing data. Records with the same id are replaced.`)) return;
 
-      if (data.transactions?.length) await store.bulkAddTransactions(data.transactions);
-      if (data.categories?.length) for (const c of data.categories) await store.upsertCategory(c);
-      if (data.subscriptions?.length) for (const s of data.subscriptions) await store.upsertSubscription(s);
-      if (data.rules?.length) for (const r of data.rules) await store.upsertRule(r);
-
-      alert("Import complete! Refresh the page to see all data.");
-      location.reload();
-    } catch (e: any) {
-      alert("Import failed: " + e.message);
+      // One bulk write per store, then a single reload. Previously each record
+      // was written individually and every write re-read the whole store.
+      await store.restoreBackup(data);
+      toast.success(`Restored ${summary}`);
+    } catch (e) {
+      toast.error("Could not restore that backup: " + (e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -468,11 +529,11 @@ function DataBackup() {
         Import it later to restore or transfer to a new device/version.
       </p>
       <div className="grid grid-cols-2 gap-2">
-        <Button variant="outline" onClick={exportBackup}>
+        <Button variant="outline" onClick={exportBackup} disabled={busy}>
           Export backup
         </Button>
-        <Button variant="outline" onClick={() => fileRef.current?.click()}>
-          Import backup
+        <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={busy}>
+          {busy ? "Restoring…" : "Import backup"}
         </Button>
       </div>
       <input ref={fileRef} type="file" accept=".json" className="hidden"

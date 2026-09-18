@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Category, Transaction, Subscription, BillPayment, Rule, AppSettings, ProfileFilter } from "./types";
 import { Categories, Transactions, Subscriptions, BillPayments, Rules, Settings, seedIfEmpty } from "./db";
+import { isInMonth } from "./format";
 
 interface AppState {
   ready: boolean;
@@ -27,6 +28,15 @@ interface AppState {
   upsertBillPayment: (b: BillPayment) => Promise<void>;
   upsertRule: (r: Rule) => Promise<void>;
   deleteRule: (id: string) => Promise<void>;
+  restoreBackup: (data: BackupPayload) => Promise<void>;
+}
+
+export interface BackupPayload {
+  transactions?: Transaction[];
+  categories?: Category[];
+  subscriptions?: Subscription[];
+  billPayments?: BillPayment[];
+  rules?: Rule[];
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -118,6 +128,23 @@ export const useApp = create<AppState>((set, get) => ({
     await Rules.delete(id);
     set({ rules: await Rules.all() });
   },
+  /**
+   * Restore a backup in one pass.
+   *
+   * Previously each record was written with its own upsert, and every upsert
+   * re-read the whole object store to refresh state — so restoring n records
+   * cost n full table reads and a large backup appeared to hang.
+   */
+  async restoreBackup(data) {
+    await Promise.all([
+      Transactions.bulkPut(data.transactions ?? []),
+      Categories.bulkPut(data.categories ?? []),
+      Subscriptions.bulkPut(data.subscriptions ?? []),
+      BillPayments.bulkPut(data.billPayments ?? []),
+      Rules.bulkPut(data.rules ?? []),
+    ]);
+    await get().reload();
+  },
 }));
 
 // Selectors
@@ -125,10 +152,9 @@ export function useFilteredTransactions(month?: Date) {
   const { transactions, settings } = useApp();
   return transactions.filter((t) => {
     if (settings.activeProfile !== "combined" && t.profile !== settings.activeProfile) return false;
-    if (month) {
-      const d = new Date(t.date);
-      if (d.getFullYear() !== month.getFullYear() || d.getMonth() !== month.getMonth()) return false;
-    }
+    // Compared as a yyyy-mm prefix: new Date("2026-04-01") parses as UTC
+    // midnight and shifts into the previous month west of UTC.
+    if (month && !isInMonth(t.date, month)) return false;
     return true;
   });
 }

@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useApp } from "@/lib/store";
-import { formatMoney } from "@/lib/format";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { formatMoney, formatDate, isInMonth, monthKey, profileLabel } from "@/lib/format";
+import { Plus, Pencil, Trash2, Search, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import TransactionDialog from "@/components/TransactionDialog";
 import { MerchantLogo } from "@/components/MerchantLogo";
 import type { Transaction } from "@/lib/types";
@@ -13,36 +14,72 @@ export default function TransactionsPage() {
   const { transactions, categories, settings, deleteTransaction, deleteSplitGroup } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
+  const [query, setQuery] = useState("");
+  // The page used to render every transaction ever recorded, with no filter,
+  // search or paging — thousands of rows once a year of statements is in.
+  const [month, setMonth] = useState<Date | null>(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
   const catMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
-  const list = useMemo(() => {
-    return transactions
+  const scoped = useMemo(
+    () => transactions
       .filter((t) => settings.activeProfile === "combined" || t.profile === settings.activeProfile)
+      .filter((t) => !month || isInMonth(t.date, month)),
+    [transactions, settings.activeProfile, month]
+  );
+
+  const list = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return scoped
+      .filter((t) => {
+        if (!q) return true;
+        const c = catMap.get(t.categoryId);
+        return `${t.payee} ${t.description} ${t.displayDescription ?? ""} ${c?.name ?? ""}`.toLowerCase().includes(q);
+      })
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [transactions, settings.activeProfile]);
+  }, [scoped, query, catMap]);
+
+  const monthTotal = useMemo(() => {
+    let inflow = 0, outflow = 0;
+    for (const t of list) {
+      const c = catMap.get(t.categoryId);
+      if (c?.type === "income") inflow += Math.abs(t.amount);
+      else outflow += Math.abs(t.amount);
+    }
+    return { inflow, outflow };
+  }, [list, catMap]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, Transaction[]>();
     for (const t of list) {
-      m.set(t.date, [...(m.get(t.date) || []), t]);
+      const bucket = m.get(t.date);
+      if (bucket) bucket.push(t);
+      else m.set(t.date, [t]);
     }
     return [...m.entries()];
   }, [list]);
 
+  /** Months that actually contain data, for the "all time" jump list. */
+  const hasAnyOutsideMonth = transactions.length > list.length;
+
   function exportCSV() {
     const rows = list.map((t) => {
       const c = catMap.get(t.categoryId);
+      const hide = settings.discreetMode || t.isVague;
       return {
-        date: t.date,
-        amount: t.amount,
-        category: c?.name || "",
-        type: c?.type || "",
-        profile: t.profile,
-        payee: settings.discreetMode ? "" : t.payee,
-        description: settings.discreetMode ? c?.genericLabel || "" : t.description,
+        Date: t.date,
+        Type: c?.type === "income" ? "Credit" : "Debit",
+        Profile: profileLabel(t.profile),
+        Category: c?.name || "",
+        Payee: hide ? "" : t.payee,
+        Description: hide ? (t.displayDescription || c?.genericLabel || "") : t.description,
+        Amount: c?.type === "income" ? Math.abs(t.amount) : -Math.abs(t.amount),
       };
     });
-    downloadFile(`transactions-${new Date().toISOString().slice(0, 10)}.csv`, exportTransactionsCSV(rows));
+    const scope = month ? monthKey(month) : "all";
+    downloadFile(`pocket-money-transactions-${scope}.csv`, exportTransactionsCSV(rows));
   }
 
   return (
@@ -50,79 +87,129 @@ export default function TransactionsPage() {
       <div className="flex justify-between items-center gap-2">
         <h2 className="font-semibold">Transactions</h2>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={exportCSV}>
-            CSV
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditing(null);
-              setOpen(true);
-            }}
-          >
+          <Button variant="outline" size="sm" onClick={exportCSV} disabled={list.length === 0}>CSV</Button>
+          <Button size="sm" onClick={() => { setEditing(null); setOpen(true); }}>
             <Plus size={16} className="mr-1" /> Add
           </Button>
         </div>
       </div>
 
+      {/* Month scope */}
+      <div className="flex items-center gap-2">
+        <button
+          className="p-2 rounded-full bg-secondary disabled:opacity-40"
+          aria-label="Previous month"
+          disabled={!month}
+          onClick={() => month && setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
+        >
+          <ChevronLeft size={15} />
+        </button>
+        <button
+          className="flex-1 text-sm font-medium py-1.5 rounded-lg bg-secondary hover:bg-accent transition-colors"
+          onClick={() => setMonth(month ? null : new Date(new Date().getFullYear(), new Date().getMonth(), 1))}
+        >
+          {month ? month.toLocaleDateString(undefined, { month: "long", year: "numeric" }) : "All time"}
+          <span className="text-muted-foreground font-normal"> · {list.length}</span>
+        </button>
+        <button
+          className="p-2 rounded-full bg-secondary disabled:opacity-40"
+          aria-label="Next month"
+          disabled={!month}
+          onClick={() => month && setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
+        >
+          <ChevronRight size={15} />
+        </button>
+      </div>
+
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+        <Input
+          className="pl-9 pr-9"
+          placeholder="Search payee, description or category"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {query && (
+          <button
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            aria-label="Clear search"
+            onClick={() => setQuery("")}
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      {list.length > 0 && (
+        <div className="flex gap-3 text-xs text-muted-foreground px-1">
+          <span>In <span className="font-medium text-income tabular-nums">{formatMoney(monthTotal.inflow, settings.currency)}</span></span>
+          <span>Out <span className="font-medium text-expense tabular-nums">{formatMoney(monthTotal.outflow, settings.currency)}</span></span>
+        </div>
+      )}
+
       {grouped.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-12 text-center">
-          No transactions yet. Tap Add to create one, or import a CSV.
-        </p>
+        <div className="py-12 text-center space-y-2">
+          <p className="text-sm text-muted-foreground">
+            {query ? `Nothing matches "${query}".`
+              : month ? `No transactions in ${month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}.`
+              : "No transactions yet. Tap Add to create one, or import a CSV."}
+          </p>
+          {month && hasAnyOutsideMonth && !query && (
+            <button className="text-xs text-primary font-medium" onClick={() => setMonth(null)}>
+              Show all time instead
+            </button>
+          )}
+        </div>
       ) : (
         <div className="space-y-4">
           {grouped.map(([date, items]) => (
             <div key={date}>
               <p className="text-xs text-muted-foreground mb-1.5 px-1">
-                {new Date(date).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                {formatDate(date, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
               </p>
               <div className="bg-card rounded-2xl border border-border divide-y divide-border">
                 {items.map((t) => {
                   const c = catMap.get(t.categoryId);
-                  const display = settings.discreetMode || t.isVague
+                  const hide = settings.discreetMode || t.isVague;
+                  const display = hide
                     ? t.displayDescription || c?.genericLabel || c?.name
                     : t.payee || t.description || c?.name;
+                  const isIncome = c?.type === "income";
                   return (
                     <div key={t.id} className="flex items-center gap-3 p-3">
-                      <MerchantLogo payee={settings.discreetMode ? "" : (t.payee || c?.name || "")} size={36} />
+                      <MerchantLogo payee={hide ? "" : (t.payee || c?.name || "")} size={36} />
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">
                           <DiscreetText fallback={c?.genericLabel || c?.name}>{display}</DiscreetText>
                           {t.splitGroupId && <span className="ml-2 text-[10px] text-muted-foreground">SPLIT</span>}
                         </p>
-                        <p className="text-xs text-muted-foreground">
-                          {c?.name} · {t.profile}
+                        <p className="text-xs text-muted-foreground truncate">
+                          {c?.name} · {profileLabel(t.profile)}
                         </p>
                       </div>
                       <div className="text-right">
-                        <p
-                          className={
-                            "font-semibold " +
-                            (c?.type === "income" ? "text-income" : "text-foreground")
-                          }
-                        >
+                        <p className={"font-semibold tabular-nums " + (isIncome ? "text-income" : "text-foreground")}>
                           <DiscreetText fallback="••">
-                            {c?.type === "income" ? "+" : "-"}
+                            {isIncome ? "+" : "−"}
                             {formatMoney(Math.abs(t.amount), settings.currency)}
                           </DiscreetText>
                         </p>
                         <div className="flex gap-1 justify-end mt-0.5">
                           <button
                             className="text-muted-foreground hover:text-foreground"
-                            onClick={() => {
-                              setEditing(t);
-                              setOpen(true);
-                            }}
+                            aria-label="Edit transaction"
+                            onClick={() => { setEditing(t); setOpen(true); }}
                           >
                             <Pencil size={13} />
                           </button>
                           <button
                             className="text-muted-foreground hover:text-destructive"
+                            aria-label="Delete transaction"
                             onClick={() => {
                               if (t.splitGroupId) {
-                                if (confirm("Delete entire split group?")) deleteSplitGroup(t.splitGroupId);
-                              } else {
-                                if (confirm("Delete transaction?")) deleteTransaction(t.id);
+                                if (confirm("Delete every part of this split transaction?")) deleteSplitGroup(t.splitGroupId);
+                              } else if (confirm("Delete this transaction?")) {
+                                deleteTransaction(t.id);
                               }
                             }}
                           >
