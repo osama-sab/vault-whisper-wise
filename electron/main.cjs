@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, dialog, session, protocol, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { registerVaultIpc, registerQuitFlush } = require('./vault-ipc.cjs');
 
 /** Content types for the files the renderer bundle actually ships. */
 const MIME = {
@@ -38,6 +39,25 @@ let mainWindow = null;
  */
 app.setPath('userData', path.join(app.getPath('appData'), 'pocket-money'));
 
+/**
+ * One instance only.
+ *
+ * Two instances would each hold the whole dataset in memory and each write the
+ * whole vault file, so the second one's save silently discards the first's
+ * work. IndexedDB used to prevent this by locking the profile; a plain file
+ * does not, so the lock has to be explicit.
+ */
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 // Must be called before app.whenReady() — registers 'app://' as a privileged scheme
 // so IndexedDB, crypto.randomUUID, showSaveFilePicker etc. all work
 protocol.registerSchemesAsPrivileged([{
@@ -55,6 +75,9 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      // __dirname is this folder in dev and inside app.asar once packaged, so
+      // one path works for both. Must be .cjs: package.json sets type: module.
+      preload: path.join(__dirname, 'preload.cjs'),
     },
     icon: path.join(appRoot, 'public', 'favicon.ico'),
     title: 'Pocket Money',
@@ -138,6 +161,9 @@ function registerDownloadHandler() {
     const filters = [];
     if (ext === 'csv') filters.push({ name: 'CSV files', extensions: ['csv'] });
     else if (ext === 'pdf') filters.push({ name: 'PDF documents', extensions: ['pdf'] });
+    else if (ext === 'xlsx') filters.push({ name: 'Excel workbooks', extensions: ['xlsx'] });
+    else if (ext === 'pmvault') filters.push({ name: 'Pocket Money vault', extensions: ['pmvault'] });
+    else if (ext === 'json') filters.push({ name: 'JSON files', extensions: ['json'] });
     filters.push({ name: 'All files', extensions: ['*'] });
 
     const savePath = mainWindow && !mainWindow.isDestroyed()
@@ -197,6 +223,8 @@ app.whenReady().then(() => {
 
   buildMenu();
   registerDownloadHandler();
+  registerVaultIpc();
+  registerQuitFlush(() => mainWindow);
   createWindow();
 
   app.on('activate', () => {

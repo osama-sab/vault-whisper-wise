@@ -2,7 +2,7 @@ import {
   DEFAULT_ITERATIONS, WrongPassphraseError, fromB64, generateDataKey,
   openDocument, sealDocument, toB64, unwrapWithPassphrase, wrapWithPassphrase,
 } from "./crypto";
-import { createIO, type OsCrypto, type VaultIO } from "./io";
+import { createIO, registerShellHooks, reportDirty, type OsCrypto, type VaultIO } from "./io";
 import type { Keyring, VaultDocument, VaultStatus, WrapKind, WrapRecord } from "./types";
 
 /** A brand-new, empty document. seedIfEmpty() fills in the starter categories. */
@@ -143,10 +143,20 @@ export class Vault {
     if (!this.dirty) { await this.writing; return; }
     this.dirty = false;
     this.firstDirtyAt = 0;
-    await this.persist();
+    try {
+      await this.persist();
+    } finally {
+      reportDirty(this.dirty);
+    }
   }
 
-  private markDirty(): void { this.dirty = true; }
+  private markDirty(): void {
+    if (!this.dirty) {
+      this.dirty = true;
+      // Lets the shell know it must hold the quit to let us finish writing.
+      reportDirty(true);
+    }
+  }
 
   private async persist(): Promise<void> {
     if (!this.document || !this.dataKey) return;
@@ -255,7 +265,11 @@ let singleton: Vault | null = null;
 export function getVault(): Vault {
   if (!singleton) {
     const { io, os } = createIO();
-    singleton = new Vault({ io, os });
+    const v = new Vault({ io, os });
+    singleton = v;
+    // Answer the shell's pre-quit flush request, so a transaction typed a
+    // moment before closing is not lost to the debounce.
+    registerShellHooks({ isDirty: () => v.isDirty(), flush: () => v.flush() });
   }
   return singleton;
 }

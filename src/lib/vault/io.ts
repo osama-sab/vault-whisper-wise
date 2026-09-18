@@ -35,8 +35,27 @@ interface Bridge {
     writeLegacyBackup(json: string): Promise<string>;
     destroy(): Promise<void>;
     userDataPath(): Promise<string>;
+    setDirty(dirty: boolean): void;
   };
   os: { available(): Promise<boolean>; encrypt(s: string): Promise<string>; decrypt(s: string): Promise<string> };
+  onFlushRequest(handler: (token: string) => void): () => void;
+  flushDone(token: string): void;
+}
+
+/**
+ * Tell the shell whether there is unsaved work, and answer its flush request
+ * before the app closes. No-ops in a browser, where there is no shell.
+ */
+export function registerShellHooks(hooks: { isDirty(): boolean; flush(): Promise<void> }): () => void {
+  const b = bridge();
+  if (!b) return () => {};
+  return b.onFlushRequest(async (token) => {
+    try { await hooks.flush(); } finally { b.flushDone(token); }
+  });
+}
+
+export function reportDirty(dirty: boolean): void {
+  bridge()?.vault.setDirty(dirty);
 }
 
 function bridge(): Bridge | null {
