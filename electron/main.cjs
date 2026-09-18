@@ -1,9 +1,42 @@
-const { app, BrowserWindow, Menu, dialog, session, protocol, net, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, session, protocol, shell } = require('electron');
 const path = require('path');
-const url = require('url');
+const fs = require('fs');
+
+/** Content types for the files the renderer bundle actually ships. */
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+};
 
 let appRoot;
 let mainWindow = null;
+
+/**
+ * Pin the data directory.
+ *
+ * app.getPath('userData') is derived from app.getName(), which reads
+ * package.json's productName ?? name. Existing installs keep their data in
+ * %APPDATA%/pocket-money, so anything that changes the resolved app name
+ * silently relocates the folder and the app opens with no transactions in it.
+ * Setting it explicitly makes the location independent of that.
+ */
+app.setPath('userData', path.join(app.getPath('appData'), 'pocket-money'));
 
 // Must be called before app.whenReady() — registers 'app://' as a privileged scheme
 // so IndexedDB, crypto.randomUUID, showSaveFilePicker etc. all work
@@ -117,14 +150,24 @@ function registerDownloadHandler() {
 }
 
 app.whenReady().then(() => {
-  appRoot = app.isPackaged
-    ? path.join(process.resourcesPath, 'app')
-    : path.join(__dirname, '..');
+  // app.getAppPath() resolves in every layout: the project directory in dev,
+  // and resources/app.asar once packaged. The previous hardcoded
+  // resources/app is where @electron/packager put an unpacked build, but
+  // electron-builder produces an asar, so the packaged app served nothing.
+  appRoot = app.getAppPath();
+
+  // Logged so a relocated data folder is diagnosable rather than looking like
+  // the app lost everything.
+  console.log('[pocket-money] userData:', app.getPath('userData'));
 
   const distPath = path.join(appRoot, 'dist');
 
-  // Register custom protocol to serve dist/ files (makes it a secure context)
-  protocol.handle('app', (request) => {
+  // Register custom protocol to serve dist/ files (makes it a secure context).
+  //
+  // Files are read with fs rather than net.fetch(file://...): Electron patches
+  // fs to see inside an asar archive, but Chromium's network stack does not,
+  // so a file:// fetch cannot read the packaged bundle.
+  protocol.handle('app', async (request) => {
     let filePath;
     try {
       filePath = decodeURIComponent(new URL(request.url).pathname);
@@ -139,7 +182,17 @@ app.whenReady().then(() => {
     if (fullPath !== distPath && !fullPath.startsWith(distPath + path.sep)) {
       return new Response('Forbidden', { status: 403 });
     }
-    return net.fetch(url.pathToFileURL(fullPath).toString());
+
+    try {
+      const body = await fs.promises.readFile(fullPath);
+      const type = MIME[path.extname(fullPath).toLowerCase()] || 'application/octet-stream';
+      return new Response(body, { headers: { 'content-type': type } });
+    } catch (err) {
+      if (err && (err.code === 'ENOENT' || err.code === 'EISDIR')) {
+        return new Response('Not found', { status: 404 });
+      }
+      return new Response('Internal error', { status: 500 });
+    }
   });
 
   buildMenu();

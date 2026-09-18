@@ -12,9 +12,51 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "electron": "electron .",
-    "dist": "npm run build && npx @electron/packager . \"Pocket Money\" --platform=win32 --arch=x64 --out=release --overwrite --icon=public/favicon.ico --ignore=node_modules/.bin --ignore=release --ignore=src --ignore=.lovable --ignore=.git",
-    "dist:mac": "npm run build && npx @electron/packager . \"Pocket Money\" --platform=darwin --arch=x64 --out=release --overwrite --icon=public/favicon.ico",
-    "dist:linux": "npm run build && npx @electron/packager . \"Pocket Money\" --platform=linux --arch=x64 --out=release --overwrite --icon=public/favicon.ico"
+    "dist": "npm run build && electron-builder --win",
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "//build": [
+    "productName lives inside 'build', not at the root: electron-builder uses it for the installer and executable name, while Electron's app.getName() keeps reading the root 'name'. Putting it at the root would move app.getPath('userData') from %APPDATA%/pocket-money to %APPDATA%/Pocket Money and the app would open with no data. electron/main.cjs also pins the path explicitly.",
+    "node_modules is excluded from 'files' deliberately: vite bundles the whole renderer into dist/, and electron/main.cjs requires only electron, path and url, all built in. Without the exclusion electron-builder ships the entire dependency tree - including devDependencies of electron-builder itself - producing a 166 MB asar instead of 1 MB.",
+    "Note: electron-builder validates its config strictly, so comment keys cannot live inside the 'build' object."
+  ],
+  "build": {
+    "appId": "com.pocketmoney.app",
+    "productName": "Pocket Money",
+    "directories": { "output": "release" },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "public/**/*",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "public/favicon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Pocket Money",
+      "uninstallDisplayName": "Pocket Money"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "public/favicon.ico",
+      "category": "public.app-category.finance"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "public/favicon.ico",
+      "category": "Office"
+    }
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -86,6 +128,7 @@
     "@vitejs/plugin-react-swc": "^3.11.0",
     "autoprefixer": "^10.4.21",
     "electron": "^41.5.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9.32.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
