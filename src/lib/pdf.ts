@@ -1,5 +1,5 @@
 import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import autoTable, { type RowInput, type Styles, type UserOptions } from "jspdf-autotable";
 import type { Category, Transaction, Subscription, ProfileFilter, ProfileId } from "./types";
 import { formatMoney, formatDate, profileLabel, monthKey } from "./format";
 import { downloadFile, exportTransactionsCSV } from "./csv";
@@ -139,13 +139,76 @@ function heading(doc: jsPDF, text: string, y: number, needed = 26): number {
   return top + 3;
 }
 
+// ─── VERTICAL RHYTHM ───────────────────────────────────
+// Named so section spacing is consistent, instead of the scatter of
+// +1 / +6 / +7 / +8 / +10 magic numbers this file used to carry.
+const GAP_AFTER_MONTH_TITLE = 6;
+const GAP_BEFORE_HEADING = 8;
+const GAP_AFTER_HEADING = 1;
+const GAP_BETWEEN_SECTIONS = 10;
+
 const baseTable = {
-  margin: { left: MARGIN, right: MARGIN },
+  // `top` applies to pages a table spills onto (startY governs the first),
+  // leaving room for the "(continued)" running header drawn in the footer pass.
+  margin: { left: MARGIN, right: MARGIN, top: 22 },
   headStyles: { fillColor: rgb(TEAL), textColor: 255, fontStyle: "bold" as const, fontSize: 8 },
-  bodyStyles: { fontSize: 8, textColor: rgb(INK), lineColor: rgb(RULE), lineWidth: 0.1 },
+  // No cell borders: zebra banding and the header fill carry the structure,
+  // which reads like a financial statement rather than a spreadsheet grid.
+  bodyStyles: { fontSize: 8, textColor: rgb(INK), lineWidth: 0 },
   alternateRowStyles: { fillColor: rgb(ZEBRA) },
-  styles: { cellPadding: 1.8, overflow: "linebreak" as const },
+  styles: { cellPadding: 1.8, overflow: "linebreak" as const, lineColor: rgb(RULE) },
 };
+
+export type Align = "left" | "right" | "center";
+
+export interface ColSpec {
+  header: string;
+  align?: Align;
+  width?: number;
+  padding?: { top: number; bottom: number; left: number; right: number };
+}
+
+/**
+ * Build autoTable options from a column spec.
+ *
+ * jspdf-autotable v5 applies `columnStyles` to BODY cells only — see
+ * `dist/jspdf.plugin.autotable.js`: `sectionName === 'body' ? columnStyles : {}`.
+ * So a right-aligned numeric column gets a LEFT-aligned header unless the
+ * alignment is reapplied to the head and foot explicitly. Routing every table
+ * through this helper is what stops the two drifting apart again.
+ */
+export function tableFor(cols: ColSpec[], body: RowInput[], extra: Partial<UserOptions> = {}): UserOptions {
+  const columnStyles: Record<number, Partial<Styles>> = {};
+  cols.forEach((c, i) => {
+    const s: Partial<Styles> = {};
+    if (c.align) s.halign = c.align;
+    if (c.width) s.cellWidth = c.width;
+    if (c.padding) s.cellPadding = c.padding;
+    if (Object.keys(s).length) columnStyles[i] = s;
+  });
+
+  const { didParseCell, ...rest } = extra;
+
+  return {
+    ...baseTable,
+    head: [cols.map((c) => c.header)],
+    body,
+    columnStyles,
+    ...rest,
+    didParseCell(data) {
+      if (data.section !== "body") {
+        const align = cols[data.column.index]?.align;
+        // A colSpan cell reports its first column's index and carries its own
+        // alignment in the cell definition, so leave those to the caller.
+        if (align && data.cell.colSpan === 1) data.cell.styles.halign = align;
+      }
+      didParseCell?.(data);
+    },
+  };
+}
+
+/** Index of a column by its header, so hooks survive a column being dropped. */
+const colIndex = (cols: ColSpec[], header: string) => cols.findIndex((c) => c.header === header);
 
 function money(n: number, currency: string) {
   return formatMoney(n, currency);
@@ -181,22 +244,35 @@ async function generatePDF(opts: ExportOptions) {
   doc.text(periodLabel, MARGIN, 23);
   doc.setFontSize(8.5);
   doc.text(`${profileLabel(profile)}${discreet ? "  ·  Discreet mode" : ""}`, PAGE_W - MARGIN, 23, { align: "right" });
+  doc.setFontSize(7.5);
+  doc.text(
+    `Generated ${new Date().toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })}`,
+    PAGE_W - MARGIN, 29, { align: "right" }
+  );
   doc.setTextColor(...INK);
 
   let cursor = 44;
 
+  // A long month breaks across pages, and a continuation page used to open on
+  // a bare table with nothing saying which month it belonged to. Record the
+  // span each month covers so those pages can be labelled in the footer pass.
+  const continuationOf = new Map<number, string>();
+
   model.combined.forEach((row, mi) => {
+    const monthName = row.month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
     if (mi > 0) {
       doc.addPage();
       cursor = MARGIN + 6;
     }
+    const firstPage = doc.getNumberOfPages();
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(15);
     doc.setTextColor(...INK);
-    doc.text(row.month.toLocaleDateString(undefined, { month: "long", year: "numeric" }), MARGIN, cursor);
+    doc.text(monthName, MARGIN, cursor);
     doc.setFont("helvetica", "normal");
-    cursor += 6;
+    cursor += GAP_AFTER_MONTH_TITLE;
 
     const sub = isCombined
       ? [
@@ -219,8 +295,23 @@ async function generatePDF(opts: ExportOptions) {
       );
 
     if (catRows.length) {
-      cursor = heading(doc, "Category breakdown", cursor + 7);
-      const body: unknown[][] = [];
+      cursor = heading(doc, "Category breakdown", cursor + GAP_BEFORE_HEADING);
+
+      // The Profile column says the same thing on every row of a single-profile
+      // report, so it only earns its width when both profiles are present.
+      const cols: ColSpec[] = [
+        { header: "Category" },
+        ...(isCombined ? [{ header: "Profile", width: 22 } as ColSpec] : []),
+        { header: "Credit", align: "right" },
+        { header: "Debit", align: "right" },
+        { header: "Budget", align: "right" },
+        { header: "vs Budget", align: "right" },
+      ];
+      const iCredit = colIndex(cols, "Credit");
+      const iDebit = colIndex(cols, "Debit");
+      const iVar = colIndex(cols, "vs Budget");
+
+      const body: RowInput[] = [];
       const meta: ({ credit: number; debit: number; over: boolean } | null)[] = [];
       let lastType = "";
 
@@ -231,49 +322,47 @@ async function generatePDF(opts: ExportOptions) {
           // the first body row, which landed on top of the column header.
           body.push([{
             content: profileLabel(r.c.type),
-            colSpan: 6,
-            styles: { fillColor: rgb(BANNER), textColor: rgb(TEAL), fontStyle: "bold", fontSize: 8 },
+            colSpan: cols.length,
+            styles: { fillColor: rgb(BANNER), textColor: rgb(TEAL), fontStyle: "bold", fontSize: 8, halign: "left" },
           }]);
           meta.push(null);
         }
-        const over = r.c.monthlyBudget > 0 && r.debit > r.c.monthlyBudget;
+        const hasBudget = r.c.monthlyBudget > 0;
+        const variance = r.debit - r.c.monthlyBudget;
+        // Within a cent of the budget is "on budget" — a signed "- 0,00 €" is
+        // just noise, and float drift makes an exact zero unreliable anyway.
+        const onBudget = Math.abs(variance) < 0.005;
+        const over = hasBudget && variance > 0 && !onBudget;
         body.push([
           r.c.name,
-          profileLabel(r.c.profileDefault),
+          ...(isCombined ? [profileLabel(r.c.profileDefault)] : []),
           r.credit > 0 ? `+ ${money(r.credit, currency)}` : "—",
           r.debit > 0 ? `- ${money(r.debit, currency)}` : "—",
-          r.c.monthlyBudget > 0 ? money(r.c.monthlyBudget, currency) : "—",
-          r.c.monthlyBudget > 0
-            ? `${over ? "over by " : "left "}${money(Math.abs(r.debit - r.c.monthlyBudget), currency)}`
-            : "—",
+          hasBudget ? money(r.c.monthlyBudget, currency) : "—",
+          // A signed figure in a numeric column, rather than a word glued to a
+          // number, which never sat right against a right-aligned edge.
+          !hasBudget ? "—" : onBudget ? "on budget" : `${over ? "+" : "-"} ${money(Math.abs(variance), currency)}`,
         ]);
         meta.push({ credit: r.credit, debit: r.debit, over });
       }
 
-      autoTable(doc, {
-        ...baseTable,
-        startY: cursor + 1,
-        head: [["Category", "Profile", "Credit", "Debit", "Budget", "vs Budget"]],
-        body: body as never,
-        columnStyles: {
-          2: { halign: "right" }, 3: { halign: "right" },
-          4: { halign: "right" }, 5: { halign: "right" },
-        },
+      autoTable(doc, tableFor(cols, body, {
+        startY: cursor + GAP_AFTER_HEADING,
         didParseCell(data) {
           if (data.section !== "body") return;
           const m = meta[data.row.index];
           if (!m) return;
-          if (data.column.index === 2 && m.credit > 0) data.cell.styles.textColor = rgb(CREDIT);
-          if (data.column.index === 3 && m.debit > 0) data.cell.styles.textColor = rgb(DEBIT);
-          if (data.column.index === 5) data.cell.styles.textColor = m.over ? rgb(DEBIT) : rgb(MUTED);
+          if (data.column.index === iCredit && m.credit > 0) data.cell.styles.textColor = rgb(CREDIT);
+          if (data.column.index === iDebit && m.debit > 0) data.cell.styles.textColor = rgb(DEBIT);
+          if (data.column.index === iVar) data.cell.styles.textColor = m.over ? rgb(DEBIT) : rgb(MUTED);
         },
-      });
+      }));
       cursor = lastY(doc);
     }
 
     // ── Transaction detail ──
     if (row.transactions.length) {
-      cursor = heading(doc, "Transactions", cursor + 8, 34);
+      cursor = heading(doc, "Transactions", cursor + GAP_BEFORE_HEADING, 34);
 
       const detail = row.transactions.map((t) => {
         const c = catMap.get(t.categoryId);
@@ -289,7 +378,7 @@ async function generatePDF(opts: ExportOptions) {
             isIncome ? "Credit" : "Debit",
             payeeOf(t, c, hide),
             c?.name || "—",
-            profileLabel(t.profile),
+            ...(isCombined ? [profileLabel(t.profile)] : []),
             descriptionOf(t, hide),
             // ASCII minus, not U+2212: jsPDF's standard Helvetica encodes
             // WinAnsi only, and the typographic minus renders as a stray quote.
@@ -298,26 +387,28 @@ async function generatePDF(opts: ExportOptions) {
         };
       });
 
-      autoTable(doc, {
-        ...baseTable,
-        startY: cursor + 1,
-        head: [["Date", "Type", "Payee", "Category", "Profile", "Description", "Amount"]],
-        body: detail.map((d) => d.cells),
+      const cols: ColSpec[] = [
+        { header: "Date", width: 15 },
+        { header: "Type", width: 13 },
+        // Left padding leaves room for the merchant colour tag drawn below.
+        { header: "Payee", width: 33, padding: { top: 1.8, bottom: 1.8, left: 4.2, right: 1.8 } },
+        { header: "Category", width: 25 },
+        ...(isCombined ? [{ header: "Profile", width: 18 } as ColSpec] : []),
+        { header: "Description" },
+        { header: "Amount", width: 25, align: "right" },
+      ];
+      const iType = colIndex(cols, "Type");
+      const iAmount = colIndex(cols, "Amount");
+      const iPayee = colIndex(cols, "Payee");
+
+      autoTable(doc, tableFor(cols, detail.map((d) => d.cells), {
+        startY: cursor + GAP_AFTER_HEADING,
         bodyStyles: { ...baseTable.bodyStyles, fontSize: 7 },
-        columnStyles: {
-          0: { cellWidth: 15 },
-          1: { cellWidth: 13 },
-          // Left padding leaves room for the merchant colour tag drawn below.
-          2: { cellWidth: 33, cellPadding: { top: 1.8, bottom: 1.8, left: 4.2, right: 1.8 } },
-          3: { cellWidth: 25 },
-          4: { cellWidth: 18 },
-          6: { cellWidth: 25, halign: "right" },
-        },
         didParseCell(data) {
           if (data.section !== "body") return;
           const d = detail[data.row.index];
           if (!d) return;
-          if (data.column.index === 1 || data.column.index === 6) {
+          if (data.column.index === iType || data.column.index === iAmount) {
             data.cell.styles.textColor = d.isIncome ? rgb(CREDIT) : rgb(DEBIT);
             data.cell.styles.fontStyle = "bold";
           }
@@ -326,7 +417,7 @@ async function generatePDF(opts: ExportOptions) {
         // colour tag beside each recognised merchant, so the statement can be
         // scanned by eye the way the app's transaction list can.
         didDrawCell(data) {
-          if (data.section !== "body" || data.column.index !== 2) return;
+          if (data.section !== "body" || data.column.index !== iPayee) return;
           const m = detail[data.row.index]?.merchant;
           if (!m) return;
           const [r, g, b] = hexToRgb(m.color);
@@ -336,17 +427,29 @@ async function generatePDF(opts: ExportOptions) {
         // The running balance belongs with the detail it explains, so it is a
         // real footer row. The old version printed it as loose text and threw
         // it away whenever the table ended low on the page.
+        //
+        // It is the MONTH's balance, not a per-page subtotal, so it prints once
+        // at the very end — repeating it made page 1 look like it closed on the
+        // month's final figure. Closing spans the last two columns so the label
+        // and the amount stay on one line.
+        showFoot: "lastPage",
         foot: [[
-          { content: `Opening  ${money(row.opening, currency)}`, colSpan: 4 },
-          { content: `Closing  ${money(row.closing, currency)}`, colSpan: 3 },
+          { content: `Opening  ${money(row.opening, currency)}`, colSpan: Math.max(1, iAmount - 1) },
+          {
+            content: `Closing  ${money(row.closing, currency)}`,
+            colSpan: cols.length - Math.max(1, iAmount - 1),
+            styles: { halign: "right" },
+          },
         ]],
         footStyles: {
           fillColor: rgb(BANNER), textColor: rgb(INK),
           fontStyle: "bold", fontSize: 8, halign: "left",
         },
-      });
+      }));
       cursor = lastY(doc);
     }
+
+    for (let p = firstPage + 1; p <= doc.getNumberOfPages(); p++) continuationOf.set(p, monthName);
   });
 
   // ── Subscriptions: once, at the end, not reprinted on every month page ──
@@ -354,7 +457,7 @@ async function generatePDF(opts: ExportOptions) {
   if (activeSubs.length) {
     const lastRow = model.combined[model.combined.length - 1];
     const settled = new Set(lastRow.recon.fulfilled.map((s) => s.id));
-    let y = heading(doc, "Recurring subscriptions", lastY(doc) + 10, 36);
+    let y = heading(doc, "Recurring subscriptions", lastY(doc) + GAP_BETWEEN_SECTIONS, 36);
     doc.setFontSize(8);
     doc.setTextColor(...MUTED);
     doc.text(
@@ -364,30 +467,46 @@ async function generatePDF(opts: ExportOptions) {
     doc.setTextColor(...INK);
     y += 6;
 
-    autoTable(doc, {
-      ...baseTable,
+    const cols: ColSpec[] = [
+      { header: "Subscription" },
+      { header: "Due", width: 18 },
+      { header: "Category" },
+      ...(isCombined ? [{ header: "Profile", width: 22 } as ColSpec] : []),
+      { header: "Status", width: 20 },
+      { header: "Expected", width: 26, align: "right" },
+    ];
+    const iStatus = colIndex(cols, "Status");
+
+    autoTable(doc, tableFor(cols, activeSubs.map((s) => [
+      s.name,
+      `Day ${s.dueDay}`,
+      catMap.get(s.categoryId)?.name || "—",
+      ...(isCombined ? [profileLabel(s.profile)] : []),
+      settled.has(s.id) ? "Paid" : "Due",
+      money(s.expectedAmount, currency),
+    ]), {
       startY: y,
-      head: [["Subscription", "Due", "Category", "Profile", "Status", "Expected"]],
-      body: activeSubs.map((s) => [
-        s.name,
-        `Day ${s.dueDay}`,
-        catMap.get(s.categoryId)?.name || "—",
-        profileLabel(s.profile),
-        settled.has(s.id) ? "Paid" : "Due",
-        money(s.expectedAmount, currency),
-      ]),
-      columnStyles: { 5: { halign: "right" } },
       didParseCell(data) {
-        if (data.section !== "body" || data.column.index !== 4) return;
+        if (data.section !== "body" || data.column.index !== iStatus) return;
         data.cell.styles.textColor = data.cell.text[0] === "Paid" ? rgb(CREDIT) : rgb(MUTED);
       },
-    });
+    }));
   }
 
   // ── Footers ──
   const pages = doc.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
+
+    const carried = continuationOf.get(i);
+    if (carried) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(...MUTED);
+      doc.text(`${carried} (continued)`, MARGIN, 17);
+      doc.setFont("helvetica", "normal");
+    }
+
     doc.setFontSize(7);
     doc.setTextColor(...MUTED);
     doc.setDrawColor(...RULE);
@@ -408,7 +527,16 @@ function balanceTable(
   currency: string,
   isCombined: boolean
 ): number {
-  const head = isCombined ? [["", "Combined", ...sub.map((s) => s.label)]] : [["", "Amount"]];
+  // The corner cell used to be blank, which read as unfinished. Naming the
+  // period there turns dead space into the one label the table was missing.
+  const corner = row.month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const cols: ColSpec[] = isCombined
+    ? [
+      { header: corner, width: 50 },
+      { header: "Combined", align: "right" },
+      ...sub.map((s) => ({ header: s.label, align: "right" as Align })),
+    ]
+    : [{ header: corner, width: 50 }, { header: "Amount", align: "right" }];
 
   const line = (label: string, pick: (r: MonthLedgerRow) => number) =>
     isCombined
@@ -423,16 +551,9 @@ function balanceTable(
     line("Closing balance", (r) => r.closing),
   ];
 
-  autoTable(doc, {
-    ...baseTable,
+  autoTable(doc, tableFor(cols, body, {
     startY: y,
-    head,
-    body,
     alternateRowStyles: {},
-    columnStyles: {
-      0: { cellWidth: 50 },
-      1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" },
-    },
     didParseCell(data) {
       if (data.section !== "body") return;
       const r = data.row.index;
@@ -446,7 +567,7 @@ function balanceTable(
         data.cell.styles.textColor = value >= 0 ? rgb(CREDIT) : rgb(DEBIT);
       }
     },
-  });
+  }));
   return lastY(doc);
 }
 
