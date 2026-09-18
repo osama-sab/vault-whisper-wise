@@ -14,6 +14,17 @@ export interface MerchantInfo {
   color: string;
   abbrev: string;
   label: string;
+  /**
+   * Optional brand mark: an SVG path drawn in a 24x24 box, rendered in the
+   * merchant's colour. When present it is used in place of the monogram, in
+   * the app AND in the PDF report.
+   *
+   * None are shipped: a faithful logo is licensed artwork, and an approximated
+   * one looks broken. To add a real one, put the path data here — for example
+   *   { keywords: ["rewe"], ..., mark: "M4 6h16v12H4z" }
+   * and both surfaces pick it up with no other change.
+   */
+  mark?: string;
 }
 
 export const MERCHANTS: MerchantInfo[] = [

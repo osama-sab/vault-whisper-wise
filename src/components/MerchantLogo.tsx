@@ -31,6 +31,21 @@ export function MerchantLogo({
     );
   }
 
+  // A real brand mark wins over the monogram when one is defined.
+  if (merchant.mark) {
+    return (
+      <div
+        className={`flex-shrink-0 rounded-full flex items-center justify-center ${className}`}
+        style={{ width: size, height: size, backgroundColor: `${merchant.color}1A` }}
+        title={merchant.label}
+      >
+        <svg width={size * 0.62} height={size * 0.62} viewBox="0 0 24 24" fill={merchant.color} aria-hidden="true">
+          <path d={merchant.mark} />
+        </svg>
+      </div>
+    );
+  }
+
   // Determine text color (white or black based on brand color brightness)
   const textColor = isLight(merchant.color) ? "#000" : "#fff";
 

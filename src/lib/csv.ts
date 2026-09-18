@@ -33,7 +33,7 @@ const MONTHS: Record<string, number> = {
 };
 
 /** Matches an all-numeric date, capturing the three components in order. */
-const NUMERIC_DATE = /^(\d{1,4})[.\/-](\d{1,2})[.\/-](\d{2,4})/;
+const NUMERIC_DATE = /^(\d{1,4})[./-](\d{1,2})[./-](\d{2,4})/;
 
 export function tryParseDate(s: string, order: DateOrder = "dmy"): string | null {
   if (!s || !String(s).trim()) return null;
@@ -41,7 +41,7 @@ export function tryParseDate(s: string, order: DateOrder = "dmy"): string | null
   const t = String(s).trim().replace(/[T\s]+\d{1,2}:\d{2}(:\d{2})?.*$/, "").trim();
 
   // ISO first: yyyy-mm-dd or yyyy/mm/dd (unambiguous)
-  let m = t.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})$/);
+  let m = t.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
   if (m) return isoDate(+m[1], +m[2], +m[3]);
 
   // All-numeric, year last: dd.mm.yyyy / mm.dd.yyyy / dd.mm.yy
@@ -198,7 +198,7 @@ export function columnsFor(format: BankFormat) {
   return { date: GENERIC_DATE_COLS, payee: GENERIC_PAYEE_COLS, desc: GENERIC_DESC_COLS, amount: GENERIC_AMOUNT_COLS };
 }
 
-const HEADER_TRANSFORM = (h: string) => h.trim().replace(/^﻿/, "").replace(/^"|"$/g, "");
+const HEADER_TRANSFORM = (h: string) => h.trim().replace(/^\uFEFF/, "").replace(/^"|"$/g, "");
 
 function delimiterFor(format: BankFormat) {
   return format === "sparkasse" ? ";" : undefined; // auto-detect for others

@@ -1,20 +1,34 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { Category, Transaction, Subscription, ProfileFilter, ProfileId } from "./types";
-import { formatMoney } from "./format";
+import { formatMoney, formatDate, profileLabel, monthKey } from "./format";
 import { downloadFile, exportTransactionsCSV } from "./csv";
 import { findMerchant } from "./merchants";
+import { buildLedger, filterByProfile, type MonthLedgerRow } from "./budget";
+import { buildXLSX, type Sheet } from "./xlsx";
 
+// ─── PALETTE ───────────────────────────────────────────
+// Restrained on purpose. Row fills carry no meaning — direction is shown in
+// the Type column and in the sign and colour of the amount. The old report
+// filled every income row solid green and every odd expense row light red,
+// which turned most of the table pink for no reason at all.
+const INK = [23, 37, 36] as const;
 const TEAL = [15, 118, 110] as const;
-const GREEN = [16, 185, 129] as const;
-const RED = [239, 68, 68] as const;
-const GRAY = [100, 116, 139] as const;
-const LIGHT_GREEN = [220, 252, 231] as const;
-const LIGHT_RED = [254, 226, 226] as const;
-const DARK_TEAL = [10, 80, 75] as const;
-const BLUE = [59, 130, 246] as const;
+const CREDIT = [6, 118, 71] as const;
+const DEBIT = [180, 35, 24] as const;
+const MUTED = [100, 116, 115] as const;
+const ZEBRA = [246, 248, 248] as const;
+const RULE = [219, 229, 228] as const;
+const BANNER = [232, 240, 239] as const;
 
-function cap(s: string): string { return s.charAt(0).toUpperCase() + s.slice(1); }
+/** autoTable needs a mutable 3-tuple; spreading a readonly const gives number[]. */
+const rgb = (c: readonly [number, number, number]): [number, number, number] => [c[0], c[1], c[2]];
+
+const PAGE_W = 210;
+const PAGE_H = 297;
+const MARGIN = 14;
+const FOOTER_Y = PAGE_H - 10;
+const BOTTOM_LIMIT = PAGE_H - 20;
 
 export interface ExportOptions {
   months: Date[];
@@ -24,323 +38,498 @@ export interface ExportOptions {
   discreet: boolean;
   profile: ProfileFilter;
   currency: string;
-  openingBalance: number;
+  /** Opening balance per profile; combined is the sum of the two. */
+  openingBalances: Record<ProfileId, number>;
   formats: ("pdf" | "csv" | "xlsx")[];
+  fileStem: string;
+  periodLabel: string;
 }
 
 export async function exportReport(opts: ExportOptions) {
   if (opts.formats.includes("pdf")) await generatePDF(opts);
   if (opts.formats.includes("csv")) await generateCSV(opts);
+  if (opts.formats.includes("xlsx")) await generateXLSX(opts);
 }
 
-// Helper: compute totals for a set of transactions
-function computeTotals(txs: Transaction[], catMap: Map<string, Category>, subs: Subscription[]) {
-  let credit = 0, debit = 0;
-  const catTotals = new Map<string, { credit: number; debit: number }>();
-  for (const t of txs) {
-    const c = catMap.get(t.categoryId);
-    if (!c) continue;
-    const isIn = c.type === "income";
-    if (isIn) credit += t.amount; else debit += t.amount;
-    const ct = catTotals.get(c.id) || { credit: 0, debit: 0 };
-    if (isIn) ct.credit += t.amount; else ct.debit += t.amount;
-    catTotals.set(c.id, ct);
+// ─── SHARED SHAPING ────────────────────────────────────
+
+/** A transaction is hidden if the report is discreet OR the row is vague. */
+function isHidden(t: Transaction, discreet: boolean): boolean {
+  // t.isVague was previously ignored by both exporters, so rows deliberately
+  // marked vague were printed in full.
+  return discreet || t.isVague;
+}
+
+function payeeOf(t: Transaction, cat: Category | undefined, hide: boolean): string {
+  if (hide) return t.displayDescription || cat?.genericLabel || cat?.name || "Personal";
+  const merchant = findMerchant(t.payee);
+  return merchant ? merchant.label : (t.payee || t.description || "—");
+}
+
+function descriptionOf(t: Transaction, hide: boolean): string {
+  // A vague transaction carries no description at all — that is the point.
+  return hide ? "" : (t.description || "");
+}
+
+function openingFor(profile: ProfileFilter, balances: Record<ProfileId, number>): number {
+  if (profile === "combined") return balances.household + balances.personal;
+  return balances[profile];
+}
+
+interface ReportModel {
+  combined: MonthLedgerRow[];
+  household: MonthLedgerRow[] | null;
+  personal: MonthLedgerRow[] | null;
+}
+
+/**
+ * Build the ledgers up front.
+ *
+ * Months with no transactions are dropped, so a yearly export no longer emits
+ * blank pages for months that have not happened yet.
+ */
+function buildModel(opts: ExportOptions): ReportModel {
+  const { months, transactions, categories, subscriptions, profile, openingBalances } = opts;
+
+  const scopedTx = filterByProfile(transactions, profile);
+  const scopedSubs = filterByProfile(subscriptions, profile);
+
+  const keep = months.filter((m) => scopedTx.some((t) => t.date.startsWith(monthKey(m))));
+  // Always render at least the requested month, even when it is empty.
+  const useMonths = keep.length ? keep : months.slice(0, 1);
+
+  const combined = buildLedger(useMonths, scopedTx, categories, scopedSubs, openingFor(profile, openingBalances));
+
+  if (profile !== "combined") {
+    return { combined, household: null, personal: null };
   }
-  const subsTotal = subs.filter(s => s.active).reduce((sum, s) => sum + s.expectedAmount, 0);
-  return { credit, debit, subsTotal, catTotals };
+  return {
+    combined,
+    household: buildLedger(useMonths, filterByProfile(transactions, "household"), categories,
+      filterByProfile(subscriptions, "household"), openingBalances.household),
+    personal: buildLedger(useMonths, filterByProfile(transactions, "personal"), categories,
+      filterByProfile(subscriptions, "personal"), openingBalances.personal),
+  };
 }
 
-function ensureSpace(doc: jsPDF, needed: number): number {
-  const y = (doc as any).lastAutoTable?.finalY || 20;
-  if (y + needed > 270) { doc.addPage(); return 20; }
-  return y + 6;
+// ─── PDF LAYOUT HELPERS ────────────────────────────────
+
+function lastY(doc: jsPDF): number {
+  return (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? MARGIN;
 }
 
-function addSummaryTable(doc: jsPDF, label: string, startY: number, openBal: number, credit: number, debit: number, subsTotal: number, currency: string) {
-  const closeBal = openBal + credit - debit - subsTotal;
+/**
+ * Place a section heading, moving to a new page when there is no room for the
+ * heading AND a meaningful amount of what follows.
+ *
+ * The old helper compared a hardcoded number against a hard limit and could
+ * still orphan a heading at the foot of a page.
+ */
+function heading(doc: jsPDF, text: string, y: number, needed = 26): number {
+  let top = y;
+  if (top + needed > BOTTOM_LIMIT) {
+    doc.addPage();
+    top = MARGIN + 6;
+  }
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.setTextColor(0);
-  doc.text(label, 14, startY);
-  autoTable(doc, {
-    startY: startY + 3,
-    head: [["", "Amount"]],
-    body: [
-      ["Opening Balance", formatMoney(openBal, currency)],
-      ["Total Credit (Income)", `+ ${formatMoney(credit, currency)}`],
-      ["Total Debit (Expenses + Bills + Savings + Debt)", `- ${formatMoney(debit, currency)}`],
-      ["Subscriptions (committed)", `- ${formatMoney(subsTotal, currency)}`],
-      ["Closing Balance", formatMoney(closeBal, currency)],
-    ],
-    headStyles: { fillColor: [...TEAL] },
-    bodyStyles: { fontSize: 9 },
-    didParseCell(data: any) {
-      const row = data.row.index;
-      if (data.column.index === 1) {
-        if (row === 1) data.cell.styles.textColor = [...GREEN];
-        if (row === 2 || row === 3) data.cell.styles.textColor = [...RED];
-        if (row === 4) { data.cell.styles.fontStyle = "bold"; data.cell.styles.textColor = closeBal >= 0 ? [...GREEN] : [...RED]; }
-      }
-      if (row === 0 || row === 4) data.cell.styles.fontStyle = "bold";
-    },
-  });
-  return closeBal;
+  doc.setTextColor(...INK);
+  doc.text(text, MARGIN, top);
+  doc.setFont("helvetica", "normal");
+  return top + 3;
+}
+
+const baseTable = {
+  margin: { left: MARGIN, right: MARGIN },
+  headStyles: { fillColor: rgb(TEAL), textColor: 255, fontStyle: "bold" as const, fontSize: 8 },
+  bodyStyles: { fontSize: 8, textColor: rgb(INK), lineColor: rgb(RULE), lineWidth: 0.1 },
+  alternateRowStyles: { fillColor: rgb(ZEBRA) },
+  styles: { cellPadding: 1.8, overflow: "linebreak" as const },
+};
+
+function money(n: number, currency: string) {
+  return formatMoney(n, currency);
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [
+    parseInt(h.slice(0, 2), 16) || 0,
+    parseInt(h.slice(2, 4), 16) || 0,
+    parseInt(h.slice(4, 6), 16) || 0,
+  ];
 }
 
 // ─── PDF ───────────────────────────────────────────────
+
 async function generatePDF(opts: ExportOptions) {
-  const { months, transactions, categories, subscriptions, discreet, profile, currency, openingBalance } = opts;
+  const { categories, discreet, profile, currency, periodLabel } = opts;
   const doc = new jsPDF();
-  const catMap = new Map(categories.map(c => [c.id, c]));
-  const profileLabel = profile === "combined" ? "Combined" : cap(profile);
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  const model = buildModel(opts);
   const isCombined = profile === "combined";
-  const isYearly = months.length > 1;
-  const title = isYearly
-    ? `Pocket Money — ${months[0].getFullYear()} Annual Report`
-    : `Pocket Money — ${months[0].toLocaleDateString(undefined, { month: "long", year: "numeric" })}`;
 
-  // Cover
+  // ── Header band ──
   doc.setFillColor(...TEAL);
-  doc.rect(0, 0, 210, 40, "F");
+  doc.rect(0, 0, PAGE_W, 34, "F");
   doc.setTextColor(255);
-  doc.setFontSize(20);
-  doc.text(title, 14, 22);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(19);
+  doc.text("Pocket Money", MARGIN, 15);
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.text(`Profile: ${profileLabel}${discreet ? "  ·  Discreet mode" : ""}`, 14, 32);
-  doc.setTextColor(0);
+  doc.text(periodLabel, MARGIN, 23);
+  doc.setFontSize(8.5);
+  doc.text(`${profileLabel(profile)}${discreet ? "  ·  Discreet mode" : ""}`, PAGE_W - MARGIN, 23, { align: "right" });
+  doc.setTextColor(...INK);
 
-  let runningBalance = openingBalance;
+  let cursor = 44;
 
-  for (let mi = 0; mi < months.length; mi++) {
-    const m = months[mi];
-    const mKey = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
-    const monthTx = transactions.filter(t => t.date.startsWith(mKey)).sort((a, b) => a.date.localeCompare(b.date));
-    const monthLabel = m.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  model.combined.forEach((row, mi) => {
+    if (mi > 0) {
+      doc.addPage();
+      cursor = MARGIN + 6;
+    }
 
-    if (mi > 0) doc.addPage();
-    const pageStartY = mi === 0 ? 50 : 20;
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(15);
-    doc.setTextColor(0);
-    doc.text(monthLabel, 14, pageStartY);
+    doc.setTextColor(...INK);
+    doc.text(row.month.toLocaleDateString(undefined, { month: "long", year: "numeric" }), MARGIN, cursor);
+    doc.setFont("helvetica", "normal");
+    cursor += 6;
 
-    const allTotals = computeTotals(monthTx, catMap, subscriptions);
-    const openBal = runningBalance;
+    const sub = isCombined
+      ? [
+        { label: "Household", row: model.household![mi] },
+        { label: "Personal", row: model.personal![mi] },
+      ]
+      : [];
 
-    if (isCombined) {
-      // ── 1. COMBINED SUMMARY ──────────────────────
-      const closeBal = addSummaryTable(doc, "Combined Overview", pageStartY + 6, openBal,
-        allTotals.credit, allTotals.debit, allTotals.subsTotal, currency);
-      runningBalance = closeBal;
+    cursor = balanceTable(doc, cursor, row, sub, currency, isCombined);
 
-      // ── 2. HOUSEHOLD SUMMARY ─────────────────────
-      const hhTx = monthTx.filter(t => t.profile === "household");
-      const hhSubs = subscriptions.filter(s => s.profile === "household");
-      const hhTotals = computeTotals(hhTx, catMap, hhSubs);
-      let y = ensureSpace(doc, 50);
-      addSummaryTable(doc, "Household", y, openBal, hhTotals.credit, hhTotals.debit, hhTotals.subsTotal, currency);
+    // ── Category breakdown ──
+    const catRows = [...row.recon.byCategory.entries()]
+      .map(([id, t]) => ({ c: catMap.get(id)!, credit: t.credit, debit: t.debit }))
+      .filter((r) => r.c)
+      // Grouped by type, biggest line first within each group.
+      .sort((a, b) =>
+        a.c.type.localeCompare(b.c.type) ||
+        (b.debit + b.credit) - (a.debit + a.credit) ||
+        a.c.name.localeCompare(b.c.name)
+      );
 
-      // ── 3. PERSONAL SUMMARY ──────────────────────
-      const pTx = monthTx.filter(t => t.profile === "personal");
-      const pSubs = subscriptions.filter(s => s.profile === "personal");
-      const pTotals = computeTotals(pTx, catMap, pSubs);
-      y = ensureSpace(doc, 50);
-      addSummaryTable(doc, "Personal", y, 0, pTotals.credit, pTotals.debit, pTotals.subsTotal, currency);
+    if (catRows.length) {
+      cursor = heading(doc, "Category breakdown", cursor + 7);
+      const body: unknown[][] = [];
+      const meta: ({ credit: number; debit: number; over: boolean } | null)[] = [];
+      let lastType = "";
 
-      // ── 4. CATEGORY BREAKDOWN — separated by profile ──
-      y = ensureSpace(doc, 30);
-      doc.setFontSize(11);
-      doc.text("Category Breakdown", 14, y);
-
-      // Build rows: Household first, then separator, then Personal
-      const buildCatRows = (txs: Transaction[], profileId: ProfileId) => {
-        const t = computeTotals(txs, catMap, []);
-        return [...t.catTotals.entries()].map(([id, ct]) => {
-          const c = catMap.get(id)!;
-          return { name: c.name, type: cap(c.type), credit: ct.credit, debit: ct.debit, budget: c.monthlyBudget, profile: profileId };
-        }).sort((a, b) => a.type.localeCompare(b.type));
-      };
-
-      const hhCatRows = buildCatRows(hhTx, "household");
-      const pCatRows = buildCatRows(pTx, "personal");
-      const SEP = { name: "", type: "", credit: -1, debit: -1, budget: -1, profile: "separator" as any };
-      const allCatRows = [...hhCatRows, SEP, ...pCatRows];
-
-      autoTable(doc, {
-        startY: y + 4,
-        head: [["Category", "Type", "Credit", "Debit", "Budget"]],
-        body: allCatRows.map(r => {
-          if (r.profile === "separator") return [{ content: "PERSONAL", colSpan: 5, styles: { fontStyle: "bold" as const, fillColor: [230, 230, 230], textColor: [80, 80, 80], halign: "left" as const, fontSize: 9 } }];
-          return [
-            r.name, r.type,
-            r.credit > 0 ? `+ ${formatMoney(r.credit, currency)}` : "—",
-            r.debit > 0 ? `- ${formatMoney(r.debit, currency)}` : "—",
-            r.budget > 0 ? formatMoney(r.budget, currency) : "—",
-          ];
-        }),
-        headStyles: { fillColor: [...TEAL] },
-        bodyStyles: { fontSize: 8 },
-        didParseCell(data: any) {
-          if (data.section !== "body") return;
-          const r = allCatRows[data.row.index];
-          if (!r || r.profile === "separator") return;
-          if (data.column.index === 2 && r.credit > 0) data.cell.styles.textColor = [...GREEN];
-          if (data.column.index === 3 && r.debit > 0) data.cell.styles.textColor = [...RED];
-        },
-        willDrawCell(data: any) {
-          // Add "HOUSEHOLD" header before first row
-          if (data.section === "body" && data.row.index === 0 && data.column.index === 0) {
-            const d = data.doc as jsPDF;
-            d.setFontSize(9);
-            d.setFont("helvetica", "bold");
-            d.setTextColor(80);
-            d.setFillColor(230, 230, 230);
-            d.rect(data.cell.x, data.cell.y - 7, 182, 7, "F");
-            d.text("HOUSEHOLD", data.cell.x + 2, data.cell.y - 2);
-          }
-        },
-      });
-    } else {
-      // ── SINGLE PROFILE SUMMARY ───────────────────
-      const closeBal = addSummaryTable(doc, profileLabel, pageStartY + 6, openBal,
-        allTotals.credit, allTotals.debit, allTotals.subsTotal, currency);
-      runningBalance = closeBal;
-
-      // Category breakdown (single profile)
-      const catRows = [...allTotals.catTotals.entries()].map(([id, t]) => {
-        const c = catMap.get(id)!;
-        return { name: c.name, type: cap(c.type), credit: t.credit, debit: t.debit, budget: c.monthlyBudget };
-      }).sort((a, b) => a.type.localeCompare(b.type));
-
-      if (catRows.length > 0) {
-        autoTable(doc, {
-          startY: (doc as any).lastAutoTable.finalY + 6,
-          head: [["Category", "Type", "Credit", "Debit", "Budget"]],
-          body: catRows.map(r => [
-            r.name, r.type,
-            r.credit > 0 ? `+ ${formatMoney(r.credit, currency)}` : "—",
-            r.debit > 0 ? `- ${formatMoney(r.debit, currency)}` : "—",
-            r.budget > 0 ? formatMoney(r.budget, currency) : "—",
-          ]),
-          headStyles: { fillColor: [...TEAL] },
-          bodyStyles: { fontSize: 8 },
-          didParseCell(data: any) {
-            if (data.column.index === 2 && data.cell.text[0] !== "—") data.cell.styles.textColor = [...GREEN];
-            if (data.column.index === 3 && data.cell.text[0] !== "—") data.cell.styles.textColor = [...RED];
-          },
-        });
+      for (const r of catRows) {
+        if (r.c.type !== lastType) {
+          lastType = r.c.type;
+          // A real colSpan row. The old report painted a grey rectangle above
+          // the first body row, which landed on top of the column header.
+          body.push([{
+            content: profileLabel(r.c.type),
+            colSpan: 6,
+            styles: { fillColor: rgb(BANNER), textColor: rgb(TEAL), fontStyle: "bold", fontSize: 8 },
+          }]);
+          meta.push(null);
+        }
+        const over = r.c.monthlyBudget > 0 && r.debit > r.c.monthlyBudget;
+        body.push([
+          r.c.name,
+          profileLabel(r.c.profileDefault),
+          r.credit > 0 ? `+ ${money(r.credit, currency)}` : "—",
+          r.debit > 0 ? `- ${money(r.debit, currency)}` : "—",
+          r.c.monthlyBudget > 0 ? money(r.c.monthlyBudget, currency) : "—",
+          r.c.monthlyBudget > 0
+            ? `${over ? "over by " : "left "}${money(Math.abs(r.debit - r.c.monthlyBudget), currency)}`
+            : "—",
+        ]);
+        meta.push({ credit: r.credit, debit: r.debit, over });
       }
-    }
 
-    // ── SUBSCRIPTIONS ──────────────────────────────
-    const activeSubs = subscriptions.filter(s => s.active);
-    if (activeSubs.length > 0) {
-      let y = ensureSpace(doc, 30);
-      doc.setFontSize(11);
-      doc.text("Recurring Subscriptions", 14, y);
       autoTable(doc, {
-        startY: y + 4,
-        head: [["Name", "Due Day", "Category", "Profile", "Amount"]],
-        body: activeSubs.map(s => [
-          s.name, `Day ${s.dueDay}`,
-          catMap.get(s.categoryId)?.name || "—",
-          cap(s.profile),
-          formatMoney(s.expectedAmount, currency),
-        ]),
-        headStyles: { fillColor: [...TEAL] },
-        bodyStyles: { fontSize: 8 },
+        ...baseTable,
+        startY: cursor + 1,
+        head: [["Category", "Profile", "Credit", "Debit", "Budget", "vs Budget"]],
+        body: body as never,
+        columnStyles: {
+          2: { halign: "right" }, 3: { halign: "right" },
+          4: { halign: "right" }, 5: { halign: "right" },
+        },
+        didParseCell(data) {
+          if (data.section !== "body") return;
+          const m = meta[data.row.index];
+          if (!m) return;
+          if (data.column.index === 2 && m.credit > 0) data.cell.styles.textColor = rgb(CREDIT);
+          if (data.column.index === 3 && m.debit > 0) data.cell.styles.textColor = rgb(DEBIT);
+          if (data.column.index === 5) data.cell.styles.textColor = m.over ? rgb(DEBIT) : rgb(MUTED);
+        },
       });
+      cursor = lastY(doc);
     }
 
-    // ── TRANSACTION DETAIL ─────────────────────────
-    if (monthTx.length > 0) {
-      let y = ensureSpace(doc, 30);
-      doc.setFontSize(11);
-      doc.text("Transaction Detail", 14, y);
+    // ── Transaction detail ──
+    if (row.transactions.length) {
+      cursor = heading(doc, "Transactions", cursor + 8, 34);
 
-      const txRows = monthTx.map(t => {
+      const detail = row.transactions.map((t) => {
         const c = catMap.get(t.categoryId);
         const isIncome = c?.type === "income";
-        const merchant = findMerchant(t.payee);
-        const payeeDisplay = discreet ? (c?.genericLabel || "—") : (merchant ? merchant.label : (t.payee || "—"));
-        const descDisplay = discreet ? "" : (t.description || "");
+        const hide = isHidden(t, discreet);
         return {
-          row: [
-            t.date,
-            isIncome ? "Credit" : "Debit",
-            payeeDisplay,
-            c?.name || "—",
-            cap(t.profile),
-            descDisplay,
-            isIncome ? `+ ${formatMoney(t.amount, currency)}` : `- ${formatMoney(t.amount, currency)}`,
-          ],
           isIncome,
+          // Carried so the Payee column can be tagged with the brand colour.
+          // A vague row deliberately shows no merchant identity.
+          merchant: hide ? null : findMerchant(t.payee),
+          cells: [
+            formatDate(t.date, { day: "2-digit", month: "short" }),
+            isIncome ? "Credit" : "Debit",
+            payeeOf(t, c, hide),
+            c?.name || "—",
+            profileLabel(t.profile),
+            descriptionOf(t, hide),
+            // ASCII minus, not U+2212: jsPDF's standard Helvetica encodes
+            // WinAnsi only, and the typographic minus renders as a stray quote.
+            `${isIncome ? "+" : "-"} ${money(Math.abs(t.amount), currency)}`,
+          ],
         };
       });
 
       autoTable(doc, {
-        startY: y + 4,
+        ...baseTable,
+        startY: cursor + 1,
         head: [["Date", "Type", "Payee", "Category", "Profile", "Description", "Amount"]],
-        body: txRows.map(r => r.row),
-        headStyles: { fillColor: [...TEAL] },
-        bodyStyles: { fontSize: 7 },
-        columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 14 }, 5: { cellWidth: 38 }, 6: { cellWidth: 24 } },
-        didParseCell(data: any) {
+        body: detail.map((d) => d.cells),
+        bodyStyles: { ...baseTable.bodyStyles, fontSize: 7 },
+        columnStyles: {
+          0: { cellWidth: 15 },
+          1: { cellWidth: 13 },
+          // Left padding leaves room for the merchant colour tag drawn below.
+          2: { cellWidth: 33, cellPadding: { top: 1.8, bottom: 1.8, left: 4.2, right: 1.8 } },
+          3: { cellWidth: 25 },
+          4: { cellWidth: 18 },
+          6: { cellWidth: 25, halign: "right" },
+        },
+        didParseCell(data) {
           if (data.section !== "body") return;
-          const isIncome = txRows[data.row.index]?.isIncome;
-          if (data.column.index === 1) { data.cell.styles.textColor = isIncome ? [...GREEN] : [...RED]; data.cell.styles.fontStyle = "bold"; }
-          if (data.column.index === 6) { data.cell.styles.textColor = isIncome ? [...GREEN] : [...RED]; data.cell.styles.fontStyle = "bold"; }
-          data.cell.styles.fillColor = isIncome ? [...LIGHT_GREEN] : data.row.index % 2 === 0 ? [255, 255, 255] : [...LIGHT_RED];
+          const d = detail[data.row.index];
+          if (!d) return;
+          if (data.column.index === 1 || data.column.index === 6) {
+            data.cell.styles.textColor = d.isIncome ? rgb(CREDIT) : rgb(DEBIT);
+            data.cell.styles.fontStyle = "bold";
+          }
+        },
+        // Brand identity in the report, which previously had none at all: a
+        // colour tag beside each recognised merchant, so the statement can be
+        // scanned by eye the way the app's transaction list can.
+        didDrawCell(data) {
+          if (data.section !== "body" || data.column.index !== 2) return;
+          const m = detail[data.row.index]?.merchant;
+          if (!m) return;
+          const [r, g, b] = hexToRgb(m.color);
+          doc.setFillColor(r, g, b);
+          doc.roundedRect(data.cell.x + 1.3, data.cell.y + data.cell.height / 2 - 1.3, 2, 2.6, 0.5, 0.5, "F");
+        },
+        // The running balance belongs with the detail it explains, so it is a
+        // real footer row. The old version printed it as loose text and threw
+        // it away whenever the table ended low on the page.
+        foot: [[
+          { content: `Opening  ${money(row.opening, currency)}`, colSpan: 4 },
+          { content: `Closing  ${money(row.closing, currency)}`, colSpan: 3 },
+        ]],
+        footStyles: {
+          fillColor: rgb(BANNER), textColor: rgb(INK),
+          fontStyle: "bold", fontSize: 8, halign: "left",
         },
       });
-
-      const fy = (doc as any).lastAutoTable.finalY + 4;
-      if (fy < 280) {
-        doc.setFontSize(9);
-        doc.setTextColor(...GRAY);
-        doc.text(`Opening: ${formatMoney(openBal, currency)}  |  Closing: ${formatMoney(isCombined ? openBal + allTotals.credit - allTotals.debit - allTotals.subsTotal : runningBalance, currency)}`, 14, fy);
-      }
+      cursor = lastY(doc);
     }
-  }
-
-  // Page numbers
-  const pageCount = doc.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    doc.setFontSize(7);
-    doc.setTextColor(180);
-    doc.text(`Pocket Money · Page ${i} of ${pageCount}`, 14, 290);
-    doc.text(new Date().toLocaleDateString(), 180, 290);
-  }
-
-  const period = isYearly ? months[0].getFullYear().toString() : months[0].toLocaleDateString(undefined, { month: "short", year: "numeric" }).replace(/\s/g, "-");
-  const blob = doc.output("blob");
-  await downloadFile(`pocket-money-${profileLabel.toLowerCase()}-${period}.pdf`, blob, "application/pdf");
-}
-
-// ─── CSV ───────────────────────────────────────────────
-async function generateCSV(opts: ExportOptions) {
-  const { transactions, categories, profile, currency, discreet } = opts;
-  const catMap = new Map(categories.map(c => [c.id, c]));
-  const profileLabel = profile === "combined" ? "Combined" : cap(profile);
-
-  const rows = transactions.map(t => {
-    const c = catMap.get(t.categoryId);
-    const isIncome = c?.type === "income";
-    const merchant = findMerchant(t.payee);
-    return {
-      Date: t.date,
-      Type: isIncome ? "Credit" : "Debit",
-      Profile: cap(t.profile),
-      Category: c?.name || "",
-      "Category Type": cap(c?.type || ""),
-      Payee: discreet ? "" : (merchant ? merchant.label : t.payee),
-      Description: discreet ? (c?.genericLabel || "") : t.description,
-      Amount: isIncome ? t.amount : -t.amount,
-    };
   });
 
-  const period = opts.months.length > 1
-    ? opts.months[0].getFullYear().toString()
-    : opts.months[0].toLocaleDateString(undefined, { month: "short", year: "numeric" }).replace(/\s/g, "-");
+  // ── Subscriptions: once, at the end, not reprinted on every month page ──
+  const activeSubs = filterByProfile(opts.subscriptions, profile).filter((s) => s.active);
+  if (activeSubs.length) {
+    const lastRow = model.combined[model.combined.length - 1];
+    const settled = new Set(lastRow.recon.fulfilled.map((s) => s.id));
+    let y = heading(doc, "Recurring subscriptions", lastY(doc) + 10, 36);
+    doc.setFontSize(8);
+    doc.setTextColor(...MUTED);
+    doc.text(
+      `Status shown for ${lastRow.month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}.`,
+      MARGIN, y + 4
+    );
+    doc.setTextColor(...INK);
+    y += 6;
 
-  await downloadFile(`pocket-money-${profileLabel.toLowerCase()}-${period}.csv`, exportTransactionsCSV(rows));
+    autoTable(doc, {
+      ...baseTable,
+      startY: y,
+      head: [["Subscription", "Due", "Category", "Profile", "Status", "Expected"]],
+      body: activeSubs.map((s) => [
+        s.name,
+        `Day ${s.dueDay}`,
+        catMap.get(s.categoryId)?.name || "—",
+        profileLabel(s.profile),
+        settled.has(s.id) ? "Paid" : "Due",
+        money(s.expectedAmount, currency),
+      ]),
+      columnStyles: { 5: { halign: "right" } },
+      didParseCell(data) {
+        if (data.section !== "body" || data.column.index !== 4) return;
+        data.cell.styles.textColor = data.cell.text[0] === "Paid" ? rgb(CREDIT) : rgb(MUTED);
+      },
+    });
+  }
+
+  // ── Footers ──
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(...MUTED);
+    doc.setDrawColor(...RULE);
+    doc.line(MARGIN, FOOTER_Y - 4, PAGE_W - MARGIN, FOOTER_Y - 4);
+    doc.text(`Pocket Money · ${periodLabel} · ${profileLabel(profile)}`, MARGIN, FOOTER_Y);
+    doc.text(`Page ${i} of ${pages}`, PAGE_W - MARGIN, FOOTER_Y, { align: "right" });
+  }
+
+  await downloadFile(`${opts.fileStem}.pdf`, doc.output("blob"), "application/pdf");
+}
+
+/** Opening / credits / debits / still expected / closing, with a per-profile split. */
+function balanceTable(
+  doc: jsPDF,
+  y: number,
+  row: MonthLedgerRow,
+  sub: { label: string; row: MonthLedgerRow }[],
+  currency: string,
+  isCombined: boolean
+): number {
+  const head = isCombined ? [["", "Combined", ...sub.map((s) => s.label)]] : [["", "Amount"]];
+
+  const line = (label: string, pick: (r: MonthLedgerRow) => number) =>
+    isCombined
+      ? [label, money(pick(row), currency), ...sub.map((s) => money(pick(s.row), currency))]
+      : [label, money(pick(row), currency)];
+
+  const body = [
+    line("Opening balance", (r) => r.opening),
+    line("Credits in", (r) => r.recon.credit),
+    line("Debits out", (r) => r.recon.debit),
+    line("Bills still expected", (r) => r.recon.stillExpected),
+    line("Closing balance", (r) => r.closing),
+  ];
+
+  autoTable(doc, {
+    ...baseTable,
+    startY: y,
+    head,
+    body,
+    alternateRowStyles: {},
+    columnStyles: {
+      0: { cellWidth: 50 },
+      1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" },
+    },
+    didParseCell(data) {
+      if (data.section !== "body") return;
+      const r = data.row.index;
+      if (r === 0 || r === 4) data.cell.styles.fontStyle = "bold";
+      if (r === 4) data.cell.styles.fillColor = rgb(BANNER);
+      if (data.column.index === 0) return;
+      if (r === 1) data.cell.styles.textColor = rgb(CREDIT);
+      if (r === 2 || r === 3) data.cell.styles.textColor = rgb(DEBIT);
+      if (r === 4) {
+        const value = data.column.index === 1 ? row.closing : (sub[data.column.index - 2]?.row.closing ?? 0);
+        data.cell.styles.textColor = value >= 0 ? rgb(CREDIT) : rgb(DEBIT);
+      }
+    },
+  });
+  return lastY(doc);
+}
+
+// ─── TABULAR DATA (CSV and XLSX share the same shaping) ──
+
+function transactionRows(opts: ExportOptions, model: ReportModel) {
+  const catMap = new Map(opts.categories.map((c) => [c.id, c]));
+  return model.combined.flatMap((row) =>
+    row.transactions.map((t) => {
+      const c = catMap.get(t.categoryId);
+      const isIncome = c?.type === "income";
+      const hide = isHidden(t, opts.discreet);
+      return {
+        Date: t.date,
+        Month: monthKey(row.month),
+        Type: isIncome ? "Credit" : "Debit",
+        Profile: profileLabel(t.profile),
+        Category: c?.name || "",
+        "Category type": profileLabel(c?.type || ""),
+        Payee: hide ? "" : payeeOf(t, c, false),
+        Description: hide ? (t.displayDescription || c?.genericLabel || "") : (t.description || ""),
+        Amount: isIncome ? Math.abs(t.amount) : -Math.abs(t.amount),
+      };
+    })
+  );
+}
+
+/** The category summary a flat transaction list cannot give you. */
+function categoryRows(opts: ExportOptions, model: ReportModel) {
+  const catMap = new Map(opts.categories.map((c) => [c.id, c]));
+  return model.combined.flatMap((row) =>
+    [...row.recon.byCategory.entries()].map(([id, t]) => {
+      const c = catMap.get(id);
+      return {
+        Month: monthKey(row.month),
+        Category: c?.name || "",
+        Type: profileLabel(c?.type || ""),
+        Profile: profileLabel(c?.profileDefault || ""),
+        Credit: t.credit,
+        Debit: t.debit,
+        Budget: c?.monthlyBudget ?? 0,
+        "Over budget by": c && c.monthlyBudget > 0 ? Math.max(0, t.debit - c.monthlyBudget) : 0,
+      };
+    })
+  );
+}
+
+function balanceRows(model: ReportModel) {
+  return model.combined.map((row, i) => ({
+    Month: monthKey(row.month),
+    Opening: row.opening,
+    Credits: row.recon.credit,
+    Debits: row.recon.debit,
+    "Still expected": row.recon.stillExpected,
+    Closing: row.closing,
+    "Household closing": model.household ? model.household[i].closing : "",
+    "Personal closing": model.personal ? model.personal[i].closing : "",
+  }));
+}
+
+async function generateCSV(opts: ExportOptions) {
+  const model = buildModel(opts);
+  // Three files, because a flat transaction list cannot answer "what did each
+  // category cost this month" — which is what a spreadsheet is actually for.
+  await downloadFile(`${opts.fileStem}-transactions.csv`, exportTransactionsCSV(transactionRows(opts, model)));
+  await downloadFile(`${opts.fileStem}-categories.csv`, exportTransactionsCSV(categoryRows(opts, model)));
+  await downloadFile(`${opts.fileStem}-balances.csv`, exportTransactionsCSV(balanceRows(model)));
+}
+
+async function generateXLSX(opts: ExportOptions) {
+  const model = buildModel(opts);
+  const sheet = (name: string, rows: Record<string, unknown>[]): Sheet => {
+    if (!rows.length) return { name, rows: [["No data"]] };
+    const headers = Object.keys(rows[0]);
+    return { name, rows: [headers, ...rows.map((r) => headers.map((h) => r[h] as string | number))] };
+  };
+  await downloadFile(
+    `${opts.fileStem}.xlsx`,
+    buildXLSX([
+      sheet("Balances", balanceRows(model)),
+      sheet("Categories", categoryRows(opts, model)),
+      sheet("Transactions", transactionRows(opts, model)),
+    ]),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
 }
