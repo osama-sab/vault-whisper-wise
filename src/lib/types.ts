@@ -16,6 +16,31 @@ export interface Category {
   genericLabel: string;
 }
 
+export type AccountType = "checking" | "savings" | "credit" | "cash" | "other";
+
+/** A real-world account: a bank, a card, a wallet. */
+export interface Account {
+  id: string;
+  name: string;              // "Sparkasse", "Wise"
+  type: AccountType;
+  currency: string;          // ISO 4217; defaults to settings.currency
+  openingBalance: number;    // signed: what the account held at openingDate
+  openingDate: string;       // ISO yyyy-mm-dd
+  profileDefault?: ProfileId;
+  archived?: boolean;
+  sortOrder?: number;
+}
+
+/** The bank's own closing balance for a month, used to reconcile. */
+export interface AccountStatement {
+  id: string;                // `${accountId}-${year}-${month}` — mirrors BillPayment
+  accountId: string;
+  year: number;
+  month: number;             // 0-11, matching BillPayment
+  closingBalance: number;
+  enteredAt: string;
+}
+
 export interface Transaction {
   id: string;
   date: string; // ISO yyyy-mm-dd
@@ -29,6 +54,14 @@ export interface Transaction {
   splitGroupId?: string;
   importedFrom?: string;
   notes?: string;
+  /**
+   * Optional on purpose: making it required would break every existing test
+   * fixture and every backup exported before accounts existed. Migration
+   * backfills it and the UI always sets it; use accountOf() to absorb the gap.
+   */
+  accountId?: string;
+  /** Reserved for transfers between your own accounts (not yet implemented). */
+  transferGroupId?: string;
 }
 
 export interface Subscription {
