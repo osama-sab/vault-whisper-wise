@@ -182,5 +182,19 @@ export function browserIO(): { io: VaultIO; os: OsCrypto } {
  */
 export function createIO(): { io: VaultIO; os: OsCrypto } {
   const b = bridge();
-  return b ? electronIO(b) : browserIO();
+  if (b) return electronIO(b);
+
+  // Falling back to browser storage INSIDE the desktop app would be silent
+  // data loss from the user's point of view: the real vault is on disk, but
+  // the app would come up empty, seed itself, and look as though everything
+  // had vanished. Anything served over app:// is the desktop app, so a missing
+  // bridge there is a broken install and must fail loudly instead.
+  if (typeof location !== "undefined" && location.protocol === "app:") {
+    throw new Error(
+      "Pocket Money could not reach its secure storage (the preload script did not load). " +
+      "Your data is safe on disk and has not been changed. Please reinstall the app."
+    );
+  }
+
+  return browserIO();
 }

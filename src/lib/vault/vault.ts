@@ -105,6 +105,18 @@ export class Vault {
         return this.status();
       }
 
+      if (result.status === "migrated") {
+        // Recorded so a support question ("where did my IndexedDB go?") has an
+        // answer on disk, and so a future migration can tell it already ran.
+        this.keyring = {
+          ...this.keyring,
+          migratedFrom: "idb@1",
+          migratedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await this.io.writeKeyring(this.keyring);
+      }
+
       if (!this.document) this.document = emptyDocument();
       await this.persist();
       return this.status();

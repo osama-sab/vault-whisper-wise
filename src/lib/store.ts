@@ -1,18 +1,31 @@
 import { create } from "zustand";
-import type { Category, Transaction, Subscription, BillPayment, Rule, AppSettings, ProfileFilter } from "./types";
-import { Categories, Transactions, Subscriptions, BillPayments, Rules, Settings, seedIfEmpty } from "./db";
+import type { Category, Transaction, Subscription, BillPayment, Rule, AppSettings, ProfileFilter, Account, AccountStatement } from "./types";
+import {
+  Categories, Transactions, Subscriptions, BillPayments, Rules, Settings,
+  Accounts, Statements, seedIfEmpty, openVault, unlockVault,
+} from "./db";
 import { isInMonth } from "./format";
+import type { VaultStatus } from "./vault/types";
 
 interface AppState {
   ready: boolean;
+  /** Set when the vault needs a passphrase before anything can be loaded. */
+  locked: boolean;
+  vaultStatus: VaultStatus | null;
   categories: Category[];
   transactions: Transaction[];
   subscriptions: Subscription[];
   billPayments: BillPayment[];
   rules: Rule[];
+  accounts: Account[];
+  statements: AccountStatement[];
   settings: AppSettings;
   init: () => Promise<void>;
+  unlock: (passphrase: string) => Promise<void>;
   reload: () => Promise<void>;
+  upsertAccount: (a: Account) => Promise<void>;
+  deleteAccount: (id: string) => Promise<void>;
+  upsertStatement: (s: AccountStatement) => Promise<void>;
   setActiveProfile: (p: ProfileFilter) => Promise<void>;
   toggleDiscreet: () => Promise<void>;
   saveSettings: (patch: Partial<AppSettings>) => Promise<void>;
@@ -37,15 +50,21 @@ export interface BackupPayload {
   subscriptions?: Subscription[];
   billPayments?: BillPayment[];
   rules?: Rule[];
+  accounts?: Account[];
+  statements?: AccountStatement[];
 }
 
 export const useApp = create<AppState>((set, get) => ({
   ready: false,
+  locked: false,
+  vaultStatus: null,
   categories: [],
   transactions: [],
   subscriptions: [],
   billPayments: [],
   rules: [],
+  accounts: [],
+  statements: [],
   settings: {
     id: "settings",
     discreetMode: false,
@@ -54,20 +73,35 @@ export const useApp = create<AppState>((set, get) => ({
     currency: "EUR",
   },
   async init() {
+    // Opens the vault first, which also runs the one-time migration from the
+    // old plaintext IndexedDB. A vault protected by a passphrase comes back
+    // locked, with nothing loaded until unlock() succeeds.
+    const status = await openVault();
+    if (status.needsPassphrase) {
+      set({ locked: true, vaultStatus: status, ready: false });
+      return;
+    }
     await seedIfEmpty();
     await get().reload();
-    set({ ready: true });
+    set({ ready: true, locked: false, vaultStatus: status });
+  },
+  async unlock(passphrase) {
+    await unlockVault(passphrase);
+    set({ locked: false });
+    await get().init();
   },
   async reload() {
-    const [categories, transactions, subscriptions, billPayments, rules, settings] = await Promise.all([
+    const [categories, transactions, subscriptions, billPayments, rules, accounts, statements, settings] = await Promise.all([
       Categories.all(),
       Transactions.all(),
       Subscriptions.all(),
       BillPayments.all(),
       Rules.all(),
+      Accounts.all(),
+      Statements.all(),
       Settings.get(),
     ]);
-    set({ categories, transactions, subscriptions, billPayments, rules, settings });
+    set({ categories, transactions, subscriptions, billPayments, rules, accounts, statements, settings });
   },
   async setActiveProfile(p) {
     const next = { ...get().settings, activeProfile: p };
@@ -142,8 +176,26 @@ export const useApp = create<AppState>((set, get) => ({
       Subscriptions.bulkPut(data.subscriptions ?? []),
       BillPayments.bulkPut(data.billPayments ?? []),
       Rules.bulkPut(data.rules ?? []),
+      Accounts.bulkPut(data.accounts ?? []),
+      Statements.bulkPut(data.statements ?? []),
     ]);
     await get().reload();
+  },
+  async upsertAccount(a) {
+    await Accounts.put(a);
+    set({ accounts: await Accounts.all() });
+  },
+  async deleteAccount(id) {
+    // Never orphan transactions: an account with any attached to it cannot be
+    // removed, or they would silently vanish from every balance.
+    const inUse = get().transactions.some((t) => t.accountId === id);
+    if (inUse) throw new Error("This account still has transactions. Move or delete them first.");
+    await Accounts.delete(id);
+    set({ accounts: await Accounts.all() });
+  },
+  async upsertStatement(s) {
+    await Statements.put(s);
+    set({ statements: await Statements.all() });
   },
 }));
 

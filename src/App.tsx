@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
 import AppShell from "@/components/AppShell";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import PassphraseGate from "@/components/PassphraseGate";
 import Dashboard from "./pages/Dashboard";
 import TransactionsPage from "./pages/Transactions";
 import BillsPage from "./pages/Bills";
@@ -20,6 +21,7 @@ const queryClient = new QueryClient();
 const App = () => {
   const init = useApp((s) => s.init);
   const ready = useApp((s) => s.ready);
+  const locked = useApp((s) => s.locked);
   // init() was previously called with no .catch(): if IndexedDB was
   // unavailable the promise rejected, `ready` never flipped, and the window
   // sat on "Loading…" for ever with no message and no way to retry.
@@ -43,9 +45,10 @@ const App = () => {
             {initError ? (
               <div className="min-h-screen flex items-center justify-center p-6 bg-background">
                 <div className="max-w-md w-full bg-card border border-border rounded-2xl p-5 space-y-3">
-                  <h1 className="font-semibold text-lg">Pocket Money could not open its database</h1>
+                  <h1 className="font-semibold text-lg">Pocket Money could not open your data</h1>
                   <p className="text-sm text-muted-foreground">
-                    Local storage is unavailable, so your transactions cannot be loaded.
+                    The vault could not be opened, so your transactions cannot be loaded. Your data
+                    has not been changed.
                   </p>
                   <pre className="text-[11px] bg-secondary rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words">
                     {initError.message}
@@ -58,6 +61,8 @@ const App = () => {
                   </button>
                 </div>
               </div>
+            ) : locked ? (
+              <PassphraseGate />
             ) : !ready ? (
               <div className="min-h-screen flex items-center justify-center text-muted-foreground">
                 Loading…
