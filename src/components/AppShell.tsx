@@ -21,7 +21,7 @@ const profiles: { value: ProfileFilter; label: string }[] = [
 ];
 
 // Pages where the profile toggle bar should be hidden
-const hideProfileBarPaths = ["/settings", "/import", "/install"];
+const hideProfileBarPaths = ["/settings", "/import"];
 
 export default function AppShell() {
   const { settings, setActiveProfile, toggleDiscreet } = useApp();

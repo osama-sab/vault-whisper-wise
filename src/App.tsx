@@ -13,7 +13,6 @@ import TransactionsPage from "./pages/Transactions";
 import BillsPage from "./pages/Bills";
 import ImportPage from "./pages/Import";
 import SettingsPage from "./pages/Settings";
-import InstallPage from "./pages/Install";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -76,7 +75,6 @@ const App = () => {
                   <Route path="/import" element={<ImportPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Route>
-                <Route path="/install" element={<InstallPage />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             )}

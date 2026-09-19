@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTheme } from "next-themes";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,13 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, Sparkles } from "lucide-react";
+import { Plus, Trash2, Sparkles, Palette, Coins, Info, Sun, Moon, Monitor, type LucideIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { uid, deleteDatabase } from "@/lib/db";
 import { CategoryIcon } from "@/components/MerchantLogo";
 import type { CategoryType, ProfileId, Rule, Category } from "@/lib/types";
 import { applyRules } from "@/lib/rules";
 import { formatMoney, isValidCurrency, isoFromDate, profileLabel } from "@/lib/format";
-import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import SecurityPanel from "@/components/SecurityPanel";
 import AccountsEditor from "@/components/AccountsEditor";
@@ -24,6 +25,129 @@ const TYPE_LABELS: Record<CategoryType, string> = {
   savings: "Savings",
   debt: "Debt",
 };
+
+const APP_VERSION = "1.0.0";
+
+/** A titled group of related settings. */
+function Section({ icon: Icon, title, children }: {
+  icon: LucideIcon; title: string; children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-card rounded-2xl border border-border overflow-hidden">
+      <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+        <Icon size={15} className="text-primary" />
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
+      </div>
+      <div className="px-4 pb-4 space-y-4">{children}</div>
+    </div>
+  );
+}
+
+/** Label and explanation on the left, control on the right. */
+function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{label}</p>
+        {hint && <p className="text-[11px] text-muted-foreground mt-0.5">{hint}</p>}
+      </div>
+      <div className="flex-shrink-0 pt-0.5">{children}</div>
+    </div>
+  );
+}
+
+const THEMES = [
+  { value: "system", label: "Auto", icon: Monitor },
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+] as const;
+
+function ThemePicker() {
+  const { theme, setTheme } = useTheme();
+  // Unknown until mounted, so nothing is highlighted on the first paint.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const active = mounted ? (theme ?? "system") : null;
+
+  return (
+    <div className="inline-flex rounded-lg bg-secondary p-0.5" role="group" aria-label="Theme">
+      {THEMES.map((t) => (
+        <button
+          key={t.value}
+          onClick={() => setTheme(t.value)}
+          aria-pressed={active === t.value}
+          className={cn(
+            "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors",
+            active === t.value
+              ? "bg-card text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <t.icon size={13} />
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const ordinal = (n: number) => {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+
+/**
+ * Paydays, edited as text but shown back as chips so it is obvious what the
+ * app understood. Committed on blur rather than per keystroke — saving as you
+ * type meant a half-entered "1, 1" briefly became two paydays on the 1st.
+ */
+function PaydaysField({ paydays, onChange }: { paydays: number[]; onChange: (d: number[]) => void }) {
+  const [draft, setDraft] = useState(paydays.join(", "));
+  useEffect(() => { setDraft(paydays.join(", ")); }, [paydays]);
+
+  const parsed = useMemo(() => {
+    const days = draft
+      .split(/[,\s]+/)
+      .map((s) => parseInt(s, 10))
+      .filter((n) => Number.isFinite(n) && n >= 1 && n <= 31);
+    return [...new Set(days)].sort((a, b) => a - b);
+  }, [draft]);
+
+  const rejected = draft.trim() !== "" && parsed.length === 0;
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor="paydays" className="text-sm">Paydays</Label>
+      <Input
+        id="paydays"
+        className="w-40"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => onChange(parsed)}
+        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+        placeholder="1, 15"
+        inputMode="numeric"
+      />
+      {parsed.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-muted-foreground">Marked on the Bills calendar:</span>
+          {parsed.map((d) => (
+            <span key={d} className="text-[11px] font-medium bg-income/10 text-income rounded px-1.5 py-0.5">
+              {ordinal(d)}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className={cn("text-[11px]", rejected ? "text-destructive" : "text-muted-foreground")}>
+          {rejected
+            ? "Use day numbers between 1 and 31, separated by commas."
+            : "Which days of the month you are paid. Leave empty if it varies."}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const { settings, saveSettings } = useApp();
@@ -50,61 +174,69 @@ export default function SettingsPage() {
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="categories">Categories</TabsTrigger>
-          <TabsTrigger value="rules">Auto-Tag</TabsTrigger>
+          <TabsTrigger value="rules">Rules</TabsTrigger>
           <TabsTrigger value="data">Data</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="general" className="space-y-4 pt-3">
-          <div className="bg-card rounded-2xl border border-border p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Discreet mode</p>
-                <p className="text-xs text-muted-foreground">Blur amounts and hide payees globally.</p>
+        <TabsContent value="general" className="space-y-3 pt-3">
+          <Section icon={Palette} title="Appearance">
+            <Row label="Theme" hint="Follows Windows unless you pick one.">
+              <ThemePicker />
+            </Row>
+            <Row
+              label="Discreet mode"
+              hint="Hides every amount and payee behind dots, for working somewhere public."
+            >
+              <Switch
+                checked={settings.discreetMode}
+                onCheckedChange={(v) => saveSettings({ discreetMode: v })}
+                aria-label="Discreet mode"
+              />
+            </Row>
+          </Section>
+
+          <Section icon={Coins} title="Money">
+            <div className="space-y-1.5">
+              <Label htmlFor="currency" className="text-sm">Currency</Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  id="currency"
+                  className="w-28 uppercase tracking-wide"
+                  value={currencyDraft}
+                  maxLength={3}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(e) => setCurrencyDraft(e.target.value.toUpperCase())}
+                  onBlur={commitCurrency}
+                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                  placeholder="EUR"
+                />
+                <span className={cn("text-sm tabular-nums", currencyValid ? "text-muted-foreground" : "text-destructive")}>
+                  {currencyValid ? formatMoney(1234.5, currencyDraft) : "not a currency code"}
+                </span>
               </div>
-              <Switch checked={settings.discreetMode} onCheckedChange={(v) => saveSettings({ discreetMode: v })} />
-            </div>
-            <div>
-              <Label htmlFor="currency">Currency</Label>
-              <Input
-                id="currency"
-                value={currencyDraft}
-                maxLength={3}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(e) => setCurrencyDraft(e.target.value.toUpperCase())}
-                onBlur={commitCurrency}
-                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                placeholder="EUR"
-              />
-              <p className={"text-[11px] mt-1 " + (currencyDraft && !currencyValid ? "text-destructive" : "text-muted-foreground")}>
-                {currencyDraft && !currencyValid
-                  ? `"${currencyDraft}" is not a currency code. Use three letters, such as EUR, USD or GBP.`
-                  : `3-letter ISO code. Example: ${formatMoney(1234.5, currencyValid ? currencyDraft : "EUR")}`}
+              <p className="text-[11px] text-muted-foreground">
+                Three letters, such as EUR, USD or GBP.
               </p>
             </div>
-            <div>
-              <Label>Paydays</Label>
-              <Input
-                value={settings.paydays.join(", ")}
-                onChange={(e) =>
-                  saveSettings({
-                    paydays: e.target.value
-                      .split(",")
-                      .map((s) => parseInt(s.trim()))
-                      .filter((n) => !isNaN(n) && n >= 1 && n <= 31),
-                  })
-                }
-                placeholder="e.g. 1, 15"
-              />
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Days of the month you get paid (comma-separated). Shown as dots on the Bills calendar.
-              </p>
+
+            <PaydaysField
+              paydays={settings.paydays}
+              onChange={(paydays) => saveSettings({ paydays })}
+            />
+          </Section>
+
+          <Section icon={Info} title="About">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Version</span>
+              <span className="tabular-nums">{APP_VERSION}</span>
             </div>
-          </div>
-          <Link to="/install" className="block bg-card rounded-2xl border border-border p-4 hover:bg-accent">
-            <p className="font-medium">Install on home screen</p>
-            <p className="text-xs text-muted-foreground">Use this app like a native app.</p>
-          </Link>
+            <p className="text-xs text-muted-foreground">
+              Everything stays on this computer. Nothing is uploaded, and the app works with no
+              internet connection. See the <strong>Data</strong> tab for how it is stored and how to
+              back it up.
+            </p>
+          </Section>
         </TabsContent>
 
         <TabsContent value="accounts" className="pt-3">
