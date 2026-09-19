@@ -17,6 +17,27 @@ desktop shortcuts and registers an uninstaller in Add/Remove Programs.
 Your data lives in `%APPDATA%\pocket-money` and is never touched by installing,
 upgrading or uninstalling.
 
+## Your data
+
+Transactions are stored in a single encrypted file, `vault.dat`, keyed through
+the Windows credential store (DPAPI) tied to your Windows account. Settings →
+Data shows the live status.
+
+**What that protects against:** another Windows account on the same PC, a
+copied `%APPDATA%` folder, a stolen or imaged drive.
+
+**What it does not:** anything running as you. Electron's `safeStorage` uses
+user-scoped DPAPI with no app-specific entropy, so "only Pocket Money can read
+it" would be untrue. While the app is open, the key and your data are in memory.
+
+**An optional passphrase** (Settings → Data) adds a second factor *while the app
+is closed* — the file then needs both the Windows key and the passphrase. There
+is **no recovery** for a forgotten passphrase.
+
+**Take encrypted backups.** A `.pmvault` file is locked with a password you
+choose and does not depend on your Windows account, so it is the only thing that
+survives a new PC, a rebuilt profile, or a forgotten passphrase.
+
 ## Building it
 
 ### Prerequisites
@@ -40,7 +61,7 @@ npm run dist:linux   # Linux
 ## Working on this app
 
 ```bash
-npm test          # 56 tests
+npm test          # 148 tests
 npm run dev       # browser, hot reload
 npm run electron  # the desktop app against the built dist/
 ```
@@ -67,3 +88,16 @@ npm run electron  # the desktop app against the built dist/
 - **`node_modules` is excluded from the package.** Vite bundles the renderer
   into `dist/`, and `electron/main.cjs` uses only built-in modules. Without the
   exclusion the asar goes from 1.8 MB to 166 MB.
+- **All storage goes through `src/lib/vault/`.** `db.ts` is an adapter over the
+  in-memory document; `all()` must return a **copy**, or zustand sees the same
+  array reference, treats the update as a no-op, and the UI silently stops
+  re-rendering.
+- **Crypto lives in `vault/crypto.ts` and touches nothing else** — no Electron,
+  no filesystem — which is what makes it testable in jsdom. The OS keystore and
+  the filesystem are injected via the `OsCrypto` / `VaultIO` interfaces.
+- **Enabling a passphrase re-wraps the keyring, never the data.** The data key
+  is wrapped, so it is a ~600-byte write instead of re-encrypting everything.
+  The layering is AND (OS **and** passphrase), never OR — two independent wraps
+  would let anyone with the Windows account decrypt without the passphrase.
+- **A missing preload is a hard error, not a fallback.** Falling back to browser
+  storage inside the desktop app looks exactly like total data loss to the user.
