@@ -240,12 +240,12 @@ export default function ImportPage() {
 
       {/* STEP 1 — FORMAT */}
       {step === "format" && (
-        <div className="bg-card rounded-2xl border border-border p-4 space-y-4">
+        <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-4">
           <div className="flex items-center gap-2">
             <FileText size={18} className="text-primary" />
             <h2 className="font-semibold">Import a bank statement</h2>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground max-w-[62ch]">
             Export a CSV from your bank and open it here. Transactions are categorised using your rules and
             the built-in store list. Everything is processed on this computer — nothing is uploaded.
           </p>
@@ -272,7 +272,7 @@ export default function ImportPage() {
 
           <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onFileSelected(f); e.target.value = ""; }} />
-          <Button onClick={() => fileRef.current?.click()} className="w-full" disabled={busy}>
+          <Button onClick={() => fileRef.current?.click()} className="w-full sm:w-auto" disabled={busy}>
             <Upload size={16} className="mr-2" /> {busy ? "Reading…" : "Choose CSV file"}
           </Button>
         </div>
@@ -280,7 +280,7 @@ export default function ImportPage() {
 
       {/* STEP 2 — PREVIEW */}
       {step === "preview" && preview && (
-        <div className="bg-card rounded-2xl border border-border p-4 space-y-4">
+        <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-4">
           <div>
             <h2 className="font-semibold">Check the columns</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -378,7 +378,7 @@ export default function ImportPage() {
       {/* STEP 3 — REVIEW */}
       {step === "review" && (
         <>
-          <div className="bg-card rounded-2xl border border-border p-4 space-y-3">
+          <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-3">
             <h2 className="font-semibold">Review and import</h2>
             <div className="grid grid-cols-4 gap-2 text-xs">
               <Stat label="Selected" value={`${stats.selected}`} />
@@ -428,7 +428,7 @@ export default function ImportPage() {
               // against the personal profile is a legitimate thing to want.
               const choices = categories.filter((c) => (isIn ? c.type === "income" : c.type !== "income"));
               return (
-                <div key={p.key} className={cn("bg-card border rounded-xl p-3 space-y-2",
+                <div key={p.key} className={cn("bg-card border border-hairline rounded-xl shadow-card p-3 space-y-2",
                   p.selected ? "border-border" : "border-border/30 opacity-50")}>
                   <div className="flex items-center gap-2">
                     <Checkbox checked={p.selected} onCheckedChange={(v) => patch(i, { selected: !!v })} />

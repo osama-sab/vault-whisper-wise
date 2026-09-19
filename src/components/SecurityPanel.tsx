@@ -82,7 +82,7 @@ export default function SecurityPanel() {
       <PassphraseSection hasPassphrase={hasPassphrase} busy={busy} setBusy={setBusy} />
 
       {/* ── Encrypted backup ───────────────────────── */}
-      <div className="bg-card rounded-2xl border border-border p-4 space-y-3">
+      <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-3">
         <div className="flex items-center gap-2">
           <Download size={16} className="text-primary" />
           <p className="font-medium">Encrypted backup</p>
@@ -204,7 +204,7 @@ function PassphraseSection({
   }
 
   return (
-    <div className="bg-card rounded-2xl border border-border p-4 space-y-3">
+    <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <KeyRound size={16} className="text-primary flex-shrink-0" />

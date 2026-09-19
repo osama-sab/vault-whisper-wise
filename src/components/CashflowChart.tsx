@@ -56,7 +56,7 @@ export default function CashflowChart({ endMonth }: { endMonth: Date }) {
 
   if (!hasAny) {
     return (
-      <div className="bg-card rounded-2xl border border-border p-4">
+      <div className="bg-card rounded-2xl border border-hairline shadow-card p-4">
         <h2 className="font-semibold mb-1">Last 12 months</h2>
         <p className="text-sm text-muted-foreground">
           Nothing recorded yet. Add a transaction or import a statement and the trend appears here.
@@ -66,7 +66,7 @@ export default function CashflowChart({ endMonth }: { endMonth: Date }) {
   }
 
   return (
-    <div className="bg-card rounded-2xl border border-border p-4">
+    <div className="bg-card rounded-2xl border border-hairline shadow-card p-4">
       <div className="flex items-baseline justify-between gap-2 mb-3">
         <h2 className="font-semibold">Last 12 months</h2>
         <p className="text-xs text-muted-foreground">

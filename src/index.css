@@ -48,6 +48,13 @@ All colors MUST be HSL.
     --input: 200 15% 88%;
     --ring: 173 80% 30%;
 
+    /* Elevation, not outlines. Cards read as raised surfaces on a tinted
+       ground rather than boxes drawn with a 1px border. */
+    --shadow-sm: 0 1px 2px 0 hsl(200 25% 12% / 0.04);
+    --shadow-card: 0 1px 2px 0 hsl(200 25% 12% / 0.04), 0 4px 16px -6px hsl(200 25% 12% / 0.10);
+    --shadow-raised: 0 2px 4px 0 hsl(200 25% 12% / 0.05), 0 12px 28px -10px hsl(200 25% 12% / 0.16);
+    --hairline: 200 20% 92%;
+
     --radius: 0.85rem;
 
     --sidebar-background: 0 0% 98%;
@@ -97,6 +104,13 @@ All colors MUST be HSL.
     --border: 200 20% 22%;
     --input: 200 20% 22%;
     --ring: 173 70% 45%;
+
+    /* Shadows read as nothing on a dark ground, so the hairline carries the
+       edge there instead. */
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
+    --shadow-card: 0 1px 2px 0 hsl(0 0% 0% / 0.35), 0 4px 16px -6px hsl(0 0% 0% / 0.5);
+    --shadow-raised: 0 2px 6px 0 hsl(0 0% 0% / 0.4), 0 14px 32px -10px hsl(0 0% 0% / 0.6);
+    --hairline: 200 18% 20%;
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
@@ -118,6 +132,10 @@ All colors MUST be HSL.
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior-y: none;
+    /* 14px is a web default; this app is read at arm's length on a desktop and
+       carries a lot of small numerals, so it wants a touch more. */
+    font-size: 15px;
+    line-height: 1.55;
   }
   .discreet-blur {
     filter: blur(6px);

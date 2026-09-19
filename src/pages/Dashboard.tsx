@@ -5,9 +5,10 @@ import { reconcileMonth, filterByProfile } from "@/lib/budget";
 import { Wallet, TrendingUp, TrendingDown, PiggyBank, CreditCard, ChevronLeft, ChevronRight, Repeat, Download, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DiscreetText } from "@/components/Discreet";
-import { CategoryIcon, MerchantLogo } from "@/components/MerchantLogo";
+import { CategoryIcon, CategoryGlyph, MerchantLogo } from "@/components/MerchantLogo";
 import ExportDialog from "@/components/ExportDialog";
 import CashflowChart from "@/components/CashflowChart";
+import { Card, StatTile, SectionTitle, type Tone } from "@/components/ui/surface";
 
 export default function Dashboard() {
   const { transactions, categories, subscriptions, settings, billPayments } = useApp();
@@ -89,69 +90,73 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <button
-          className="p-2 rounded-full bg-secondary"
-          aria-label="Previous month"
-          onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <div className="text-center">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">Month</p>
-          <p className="font-semibold text-lg">
-            {month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+      {/* The stepper is one control, so its parts stay together on the left
+          rather than being flung to the edges of a wide window. */}
+      <div className="flex items-center gap-3">
+        <h1 className="text-xl font-semibold tracking-tight">
+          {month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+        </h1>
+        <div className="flex items-center gap-1">
+          <button
+            className="p-1.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+            aria-label="Previous month"
+            onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <button
+            className="p-1.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+            aria-label="Next month"
+            onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/*
+        The balance card answers the one question the page exists for, so it
+        takes the accent fill and the largest type. Everything below it is
+        supporting detail on plain surfaces.
+      */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary to-primary-glow px-6 py-5 text-primary-foreground shadow-raised">
+        {/* A soft highlight, so a large flat fill does not read as a slab. */}
+        <div aria-hidden className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-white/10 blur-2xl" />
+        <div className="relative">
+          <p className="text-[11px] font-medium uppercase tracking-wider opacity-80">Left to spend</p>
+          <p className="text-[2.5rem] leading-none font-semibold mt-2 tabular-nums tracking-tight">
+            <DiscreetText fallback="••••">{formatMoney(leftToSpend, settings.currency)}</DiscreetText>
           </p>
-        </div>
-        <button
-          className="p-2 rounded-full bg-secondary"
-          aria-label="Next month"
-          onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
-        >
-          <ChevronRight size={16} />
-        </button>
-      </div>
-
-      <div className="rounded-2xl bg-gradient-to-br from-primary to-primary-glow p-5 text-primary-foreground shadow-lg">
-        <p className="text-xs opacity-80 uppercase tracking-wide">Left to spend</p>
-        <p className="text-3xl font-bold mt-1 tabular-nums">
-          <DiscreetText fallback="••••">{formatMoney(leftToSpend, settings.currency)}</DiscreetText>
-        </p>
-        {/* Three related figures, kept together. justify-between flung them to
-            opposite edges of a wide window, so they stopped reading as a set. */}
-        <div className="grid grid-cols-3 gap-6 mt-4 text-xs opacity-90 max-w-xl">
-          <div>
-            <p className="opacity-70">Income</p>
-            <p className="font-semibold tabular-nums">
-              <DiscreetText fallback="••••">{formatMoney(recon.credit, settings.currency)}</DiscreetText>
-            </p>
-          </div>
-          <div>
-            <p className="opacity-70">Spent</p>
-            <p className="font-semibold tabular-nums">
-              <DiscreetText fallback="••••">{formatMoney(committed, settings.currency)}</DiscreetText>
-            </p>
-          </div>
-          <div>
-            <p className="opacity-70">Left to budget</p>
-            <p className="font-semibold tabular-nums">
-              <DiscreetText fallback="••••">{formatMoney(leftToBudget, settings.currency)}</DiscreetText>
-            </p>
+          {/* Three related figures kept together: justify-between flung them to
+              opposite edges of a wide window and they stopped reading as a set. */}
+          <div className="mt-5 grid grid-cols-3 gap-5 max-w-lg border-t border-white/20 pt-4">
+            {([
+              ["Income", recon.credit],
+              ["Spent", committed],
+              ["Left to budget", leftToBudget],
+            ] as const).map(([label, amount]) => (
+              <div key={label}>
+                <p className="text-[11px] uppercase tracking-wider opacity-70">{label}</p>
+                <p className="font-semibold tabular-nums mt-0.5">
+                  <DiscreetText fallback="••••">{formatMoney(amount, settings.currency)}</DiscreetText>
+                </p>
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-        <SummaryCard icon={TrendingUp} label="Income" value={totals.income} color="text-income" currency={settings.currency} />
-        <SummaryCard icon={TrendingDown} label="Expenses" value={totals.expenses} color="text-expense" currency={settings.currency} />
-        <SummaryCard icon={Wallet} label="Bills" value={totals.bills} color="text-bills" currency={settings.currency} />
-        <SummaryCard icon={PiggyBank} label="Savings" value={totals.savings} color="text-savings" currency={settings.currency} />
-        <SummaryCard icon={CreditCard} label="Debt" value={totals.debt} color="text-debt" currency={settings.currency} />
-        <SummaryCard icon={Repeat} label="Bills still due" value={recon.stillExpected} color="text-bills" currency={settings.currency} />
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <SummaryCard icon={TrendingUp} label="Income" value={totals.income} tone="income" currency={settings.currency} />
+        <SummaryCard icon={TrendingDown} label="Expenses" value={totals.expenses} tone="expense" currency={settings.currency} />
+        <SummaryCard icon={Wallet} label="Bills" value={totals.bills} tone="bills" currency={settings.currency} />
+        <SummaryCard icon={PiggyBank} label="Savings" value={totals.savings} tone="savings" currency={settings.currency} />
+        <SummaryCard icon={CreditCard} label="Debt" value={totals.debt} tone="debt" currency={settings.currency} />
+        <SummaryCard icon={Repeat} label="Bills still due" value={recon.stillExpected} tone="bills" currency={settings.currency} />
       </div>
 
       {(recon.outstanding.length > 0 || recon.fulfilled.length > 0) && (
-        <div className="bg-card rounded-2xl border border-border p-3 text-xs text-muted-foreground">
+        <Card className="p-4 text-xs text-muted-foreground">
           {recon.fulfilled.length > 0 && (
             <span>
               <span className="font-medium text-success">{recon.fulfilled.length} of {profileSubs.filter((s) => s.active).length}</span>{" "}
@@ -166,13 +171,13 @@ export default function Dashboard() {
           ) : (
             <span>Nothing further is expected.</span>
           )}
-        </div>
+        </Card>
       )}
 
       <CashflowChart endMonth={month} />
 
-      <div className="bg-card rounded-2xl border border-border p-4">
-        <h2 className="font-semibold mb-3">Budgets</h2>
+      <Card>
+        <SectionTitle>Budgets</SectionTitle>
         {byCategory.length === 0 ? (
           <p className="text-sm text-muted-foreground">No activity this month yet.</p>
         ) : (
@@ -191,7 +196,7 @@ export default function Dashboard() {
                 >
                   <div className="flex justify-between text-sm gap-2">
                     <span className="font-medium flex items-center gap-1.5 min-w-0">
-                      <CategoryIcon type={c.type} size={16} />
+                      <CategoryGlyph type={c.type} size={15} />
                       <span className="truncate">{c.name}</span>
                       {pending > 0 && <span className="text-[10px] text-muted-foreground flex-shrink-0">· {formatMoney(pending, settings.currency)} due</span>}
                     </span>
@@ -215,7 +220,7 @@ export default function Dashboard() {
             })}
           </div>
         )}
-      </div>
+      </Card>
 
       {selectedCategoryId && (() => {
         const cat = categories.find((x) => x.id === selectedCategoryId);
@@ -223,10 +228,10 @@ export default function Dashboard() {
         const catTotal = filtered.reduce((s, t) => s + Math.abs(t.amount), 0);
         const isIncome = cat?.type === "income";
         return (
-          <div className="bg-card rounded-2xl border border-primary/20 p-4 space-y-3">
+          <Card className="border-primary/25 space-y-3">
             <div className="flex justify-between items-center gap-2">
               <h3 className="font-semibold text-sm flex items-center gap-1.5 min-w-0">
-                <CategoryIcon type={cat?.type || "expenses"} size={16} />
+                <CategoryIcon type={cat?.type || "expenses"} size="sm" />
                 <span className="truncate">{cat?.name}</span>
                 <span className="text-muted-foreground font-normal flex-shrink-0">
                   — {filtered.length} transaction{filtered.length === 1 ? "" : "s"}
@@ -264,11 +269,11 @@ export default function Dashboard() {
                 })}
               </div>
             )}
-          </div>
+          </Card>
         );
       })()}
 
-      <Button variant="outline" className="w-full" onClick={() => setExportOpen(true)}>
+      <Button variant="outline" className="w-full sm:w-auto" onClick={() => setExportOpen(true)}>
         <Download size={16} className="mr-2" />
         Export report
       </Button>
@@ -279,20 +284,17 @@ export default function Dashboard() {
 }
 
 function SummaryCard({
-  icon: Icon, label, value, color, currency,
+  icon, label, value, tone, currency,
 }: {
   icon: LucideIcon;
-  label: string; value: number; color: string; currency: string;
+  label: string; value: number; tone: Tone; currency: string;
 }) {
   return (
-    <div className="bg-card rounded-2xl border border-border p-3">
-      <div className="flex items-center gap-2">
-        <Icon size={16} className={color} />
-        <p className="text-xs text-muted-foreground">{label}</p>
-      </div>
-      <p className="font-semibold mt-1 tabular-nums">
-        <DiscreetText fallback="••••">{formatMoney(Math.abs(value), currency)}</DiscreetText>
-      </p>
-    </div>
+    <StatTile
+      icon={icon}
+      tone={tone}
+      label={label}
+      value={<DiscreetText fallback="••••">{formatMoney(Math.abs(value), currency)}</DiscreetText>}
+    />
   );
 }

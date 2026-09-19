@@ -96,7 +96,7 @@ export default function BillsPage() {
         <button className="p-2 rounded-full bg-secondary" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight size={16} /></button>
       </div>
 
-      <div className="bg-card rounded-2xl border border-border p-2">
+      <div className="bg-card rounded-2xl border border-hairline shadow-card p-2">
         <div className="grid grid-cols-7 text-[10px] text-center text-muted-foreground font-medium pb-1">
           {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => <div key={d}>{d}</div>)}
         </div>
@@ -106,7 +106,7 @@ export default function BillsPage() {
             const isPayday = d != null && settings.paydays.includes(d);
             const billsHere = d != null ? subsByDay.get(d) || [] : [];
             return (
-              <div key={i} className={cn("aspect-square rounded-lg border text-[11px] p-1 flex flex-col gap-0.5",
+              <div key={i} className={cn("min-h-[4.5rem] rounded-lg border text-[11px] p-1.5 flex flex-col gap-1",
                 d == null ? "border-transparent" : "border-border", isToday && "border-primary bg-primary/5")}>
                 {d != null && (
                   <div className="flex justify-between items-center">
@@ -119,7 +119,7 @@ export default function BillsPage() {
                     <div key={s.id}
                       title={`${s.name} ${formatMoney(s.expectedAmount, settings.currency)}`}
                       className="w-full text-[9px] truncate rounded px-1 leading-tight bg-bills/20 text-bills">
-                      {s.name.slice(0, 8)}
+                      {s.name}
                     </div>
                   ))}
                 </div>
@@ -146,7 +146,7 @@ export default function BillsPage() {
         </Button>
       </div>
 
-      <p className="text-xs text-muted-foreground bg-card border border-border rounded-2xl p-3">
+      <p className="text-xs text-muted-foreground bg-card border border-hairline rounded-2xl shadow-raised p-3">
         Active subscriptions are automatically deducted from your "Left to spend" each month.
         Toggle a subscription off if you cancel it.
       </p>
@@ -154,7 +154,7 @@ export default function BillsPage() {
       {allSubs.length === 0 ? (
         <p className="text-sm text-muted-foreground py-8 text-center">No subscriptions yet. Tap "Add" to create one.</p>
       ) : (
-        <div className="bg-card rounded-2xl border border-border divide-y divide-border">
+        <div className="bg-card rounded-2xl border border-hairline shadow-card divide-y divide-hairline">
           {allSubs.map(s => {
             const c = catMap.get(s.categoryId);
             return (

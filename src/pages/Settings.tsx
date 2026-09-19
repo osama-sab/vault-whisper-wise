@@ -41,7 +41,7 @@ export function Section({ icon: Icon, title, children }: {
   icon: LucideIcon; title: string; children: React.ReactNode;
 }) {
   return (
-    <div className="bg-card rounded-2xl border border-border overflow-hidden">
+    <div className="bg-card rounded-2xl border border-hairline shadow-card overflow-hidden">
       <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
         <Icon size={15} className="text-primary" />
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
@@ -181,12 +181,12 @@ export default function SettingsPage() {
         nothing. Below `md` it collapses to a scrollable row, since a sidebar
         plus content will not fit a narrow window.
       */}
-      <Tabs defaultValue="general" orientation="vertical" className="md:flex md:gap-6 md:items-start">
+      <Tabs defaultValue="general" orientation="vertical" className="md:grid md:grid-cols-[13rem_minmax(0,1fr)] md:gap-6 md:items-start max-w-4xl">
         <TabsList
           className="
             w-full flex justify-start overflow-x-auto
-            md:w-52 lg:w-56 md:flex-shrink-0 md:flex-col md:h-auto md:overflow-visible
-            md:bg-transparent md:p-0 md:gap-0.5 md:sticky md:top-24
+            md:w-full md:flex-col md:h-auto md:items-stretch md:self-start md:overflow-visible
+            md:bg-transparent md:p-0 md:gap-1 md:sticky md:top-4
           "
         >
           {SETTINGS_SECTIONS.map((s) => (
@@ -208,7 +208,7 @@ export default function SettingsPage() {
           ))}
         </TabsList>
 
-        <div className="flex-1 min-w-0 max-w-3xl pt-4 md:pt-0">
+        <div className="min-w-0 pt-4 md:pt-0">
         <TabsContent value="general" className="space-y-3 mt-0">
           <Section icon={Palette} title="Appearance">
             <Row label="Theme" hint="Follows Windows unless you pick one.">
@@ -329,7 +329,7 @@ export function CategoriesEditor() {
 
   return (
     <div className="space-y-5">
-      <p className="text-xs text-muted-foreground bg-card border border-border rounded-2xl p-3">
+      <p className="text-xs text-muted-foreground bg-card border border-hairline rounded-2xl shadow-raised p-3">
         Categories are how you classify each transaction. Each category belongs to either Household or Personal.
         When you add a transaction with a given Profile, only its categories show up.
       </p>
@@ -340,10 +340,10 @@ export function CategoriesEditor() {
           {(["income", "bills", "expenses", "savings", "debt"] as CategoryType[]).map((t) => {
             const items = categories.filter((c) => c.type === t && c.profileDefault === p.id);
             return (
-              <div key={t} className="bg-card rounded-2xl border border-border p-3">
+              <div key={t} className="bg-card rounded-2xl border border-hairline shadow-card p-3">
                 <div className="flex justify-between items-center mb-1">
                   <p className="font-medium text-sm flex items-center gap-1.5">
-                    <CategoryIcon type={t} size={16} />
+                    <CategoryIcon type={t} size="sm" />
                     {TYPE_LABELS[t]}
                   </p>
                   <Button size="sm" variant="ghost" onClick={() => newCat(p.id, t)}>
@@ -402,7 +402,7 @@ function CategoryDialog({ cat, onClose, onSave }: { cat: Category; onClose: () =
 
   return (
     <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-card border border-border rounded-2xl p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-card border border-hairline rounded-2xl shadow-raised p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
         <p className="font-semibold">Category</p>
         <div>
           <Label>Name</Label>
@@ -480,7 +480,7 @@ export function RulesEditor() {
 
   return (
     <div className="space-y-3">
-      <div className="bg-card rounded-2xl border border-border p-4 space-y-2">
+      <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-2">
         <div className="flex items-center gap-2">
           <Sparkles size={16} className="text-primary" />
           <p className="font-medium">What are auto-tag rules?</p>
@@ -494,7 +494,7 @@ export function RulesEditor() {
         </p>
       </div>
 
-      <div className="bg-card rounded-2xl border border-border p-3 space-y-2">
+      <div className="bg-card rounded-2xl border border-hairline shadow-card p-3 space-y-2">
         <Label className="text-xs">Test against text</Label>
         <Input placeholder="e.g. REWE SAGT DANKE" value={test} onChange={(e) => setTest(e.target.value)} />
         {test && (
@@ -517,7 +517,7 @@ export function RulesEditor() {
         <Button size="sm" onClick={newRule}><Plus size={14} className="mr-1" /> New rule</Button>
       </div>
 
-      <div className="bg-card rounded-2xl border border-border divide-y divide-border">
+      <div className="bg-card rounded-2xl border border-hairline shadow-card divide-y divide-hairline">
         {rules.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground text-center">
             No rules yet. They'll be created automatically when you import a CSV and choose to save categorizations.
@@ -547,7 +547,7 @@ export function RulesEditor() {
 
       {editing && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center p-4" onClick={() => setEditing(null)}>
-          <div className="bg-card border border-border rounded-2xl p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-card border border-hairline rounded-2xl shadow-raised p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
             <p className="font-semibold">Auto-tag rule</p>
             <div>
               <Label>Keyword</Label>
@@ -691,7 +691,7 @@ export function DataBackup() {
   }
 
   return (
-    <div className="bg-card rounded-2xl border border-border p-4 space-y-3">
+    <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-3">
       <p className="font-medium">Plain JSON copy</p>
       <p className="text-xs text-muted-foreground">
         The same data as a readable JSON file, for moving it into another tool or inspecting it

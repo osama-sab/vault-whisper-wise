@@ -1,5 +1,9 @@
 import { findMerchant, type MerchantInfo } from "@/lib/merchants";
 import { useMemo } from "react";
+import { TrendingUp, ReceiptText, ShoppingBag, PiggyBank, CreditCard, type LucideIcon } from "lucide-react";
+import { IconChip, toneText, type Tone } from "@/components/ui/surface";
+import { cn } from "@/lib/utils";
+import type { CategoryType } from "@/lib/types";
 
 /** Renders a small brand-colored circle with the merchant's abbreviation */
 export function MerchantLogo({
@@ -18,12 +22,12 @@ export function MerchantLogo({
     const letter = (payee || "?").charAt(0).toUpperCase();
     return (
       <div
-        className={`flex-shrink-0 rounded-full flex items-center justify-center font-bold text-white ${className}`}
+        className={`flex-shrink-0 rounded-xl flex items-center justify-center font-semibold text-white ${className}`}
         style={{
           width: size,
           height: size,
           fontSize: size * 0.4,
-          backgroundColor: "#94a3b8",
+          backgroundColor: "hsl(var(--muted-foreground))",
         }}
       >
         {letter}
@@ -35,7 +39,7 @@ export function MerchantLogo({
   if (merchant.mark) {
     return (
       <div
-        className={`flex-shrink-0 rounded-full flex items-center justify-center ${className}`}
+        className={`flex-shrink-0 rounded-xl flex items-center justify-center ${className}`}
         style={{ width: size, height: size, backgroundColor: `${merchant.color}1A` }}
         title={merchant.label}
       >
@@ -51,7 +55,7 @@ export function MerchantLogo({
 
   return (
     <div
-      className={`flex-shrink-0 rounded-full flex items-center justify-center font-bold ${className}`}
+      className={`flex-shrink-0 rounded-xl flex items-center justify-center font-semibold ${className}`}
       style={{
         width: size,
         height: size,
@@ -76,55 +80,40 @@ function isLight(hex: string): boolean {
   return (r * 299 + g * 587 + b * 114) / 1000 > 150;
 }
 
-/** Renders an SVG icon for a CategoryType */
+/**
+ * The icon for a category type, in its own tinted chip.
+ *
+ * These were hand-drawn SVG paths with hardcoded hex colours — the "expenses"
+ * glyph was a pair of crossed arrows that read as nothing, and none of the
+ * colours came from the theme, so they stayed the same in dark mode. They are
+ * now ordinary lucide icons on the app's semantic tones.
+ */
+export const CATEGORY_ICONS: Record<CategoryType, { icon: LucideIcon; tone: Tone }> = {
+  income: { icon: TrendingUp, tone: "income" },
+  bills: { icon: ReceiptText, tone: "bills" },
+  expenses: { icon: ShoppingBag, tone: "expense" },
+  savings: { icon: PiggyBank, tone: "savings" },
+  debt: { icon: CreditCard, tone: "debt" },
+};
+
 export function CategoryIcon({
   type,
-  size = 18,
-  className = "",
+  size = "sm",
+  className,
 }: {
   type: string;
-  size?: number;
+  size?: "sm" | "md" | "lg";
   className?: string;
 }) {
-  const info = CATEGORY_ICON_MAP[type];
+  const info = CATEGORY_ICONS[type as CategoryType];
   if (!info) return null;
-
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke={info.color}
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d={info.path} />
-    </svg>
-  );
+  return <IconChip icon={info.icon} tone={info.tone} size={size} className={className} />;
 }
 
-const CATEGORY_ICON_MAP: Record<string, { path: string; color: string }> = {
-  income: {
-    path: "M12 20V4m0 0l-6 6m6-6l6 6",
-    color: "#10B981",
-  },
-  bills: {
-    path: "M9 7h6M9 11h6M9 15h4M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z",
-    color: "#8B5CF6",
-  },
-  expenses: {
-    path: "M21 4H3M21 4l-3-3m3 3l-3 3M3 20h18M3 20l3-3m-3 3l3 3M12 8v8m0-8l-3 3m3-3l3 3",
-    color: "#EF4444",
-  },
-  savings: {
-    path: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2m-16 0H3M12 8a3 3 0 100 6 3 3 0 000-6z",
-    color: "#0EA5E9",
-  },
-  debt: {
-    path: "M12 2a10 10 0 100 20 10 10 0 000-20zm1 5h-2v6h2zm0 8h-2v2h2z",
-    color: "#F59E0B",
-  },
-};
+/** Just the glyph, for places that already provide their own container. */
+export function CategoryGlyph({ type, size = 16, className }: { type: string; size?: number; className?: string }) {
+  const info = CATEGORY_ICONS[type as CategoryType];
+  if (!info) return null;
+  const Icon = info.icon;
+  return <Icon size={size} className={cn(toneText(info.tone), className)} />;
+}
