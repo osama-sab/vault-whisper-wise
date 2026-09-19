@@ -81,7 +81,10 @@ export default function CashflowChart({ endMonth }: { endMonth: Date }) {
           Hidden while discreet mode is on.
         </p>
       ) : (
-        <ChartContainer config={chartConfig} className="aspect-[16/7] w-full">
+        // A fixed height, not an aspect ratio. 16:7 of a wide desktop window is
+        // over 600px tall, which pushed everything below the chart off-screen.
+        // Twelve months of two series needs height for legibility, not area.
+        <ChartContainer config={chartConfig} className="w-full aspect-auto h-[240px] sm:h-[280px] xl:h-[320px]">
           <LineChart data={data} margin={{ left: 4, right: 12, top: 4, bottom: 0 }}>
             {/* Recessive grid: horizontal only, so it guides the eye without competing. */}
             <CartesianGrid vertical={false} strokeDasharray="3 3" />

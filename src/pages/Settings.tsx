@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, Sparkles, Palette, Coins, Info, Sun, Moon, Monitor, type LucideIcon } from "lucide-react";
+import { Plus, Trash2, Sparkles, Palette, Coins, Info, Sun, Moon, Monitor, Settings2, Wallet, Tags, ShieldCheck, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { uid, deleteDatabase } from "@/lib/db";
 import { CategoryIcon } from "@/components/MerchantLogo";
@@ -28,8 +28,16 @@ const TYPE_LABELS: Record<CategoryType, string> = {
 
 const APP_VERSION = "1.0.0";
 
+const SETTINGS_SECTIONS = [
+  { id: "general", label: "General", icon: Settings2, hint: "Theme, currency, paydays" },
+  { id: "accounts", label: "Accounts", icon: Wallet, hint: "Banks, cards, balances" },
+  { id: "categories", label: "Categories", icon: Tags, hint: "How spending is grouped" },
+  { id: "rules", label: "Rules", icon: Sparkles, hint: "Auto-sorting on import" },
+  { id: "data", label: "Data & security", icon: ShieldCheck, hint: "Encryption, backups" },
+] as const;
+
 /** A titled group of related settings. */
-function Section({ icon: Icon, title, children }: {
+export function Section({ icon: Icon, title, children }: {
   icon: LucideIcon; title: string; children: React.ReactNode;
 }) {
   return (
@@ -44,7 +52,7 @@ function Section({ icon: Icon, title, children }: {
 }
 
 /** Label and explanation on the left, control on the right. */
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+export function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0">
@@ -166,19 +174,42 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <Tabs defaultValue="general">
-        {/* Accounts lives here rather than in the bottom nav, which is already
-            five tabs and crowded on a narrow window. */}
-        <TabsList className="w-full grid grid-cols-5">
-          <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="accounts">Accounts</TabsTrigger>
-          <TabsTrigger value="categories">Categories</TabsTrigger>
-          <TabsTrigger value="rules">Rules</TabsTrigger>
-          <TabsTrigger value="data">Data</TabsTrigger>
+    <div>
+      {/*
+        A sidebar rather than a row of tabs: five sections already crowd one
+        row, each section gets room to say what it holds, and a sixth costs
+        nothing. Below `md` it collapses to a scrollable row, since a sidebar
+        plus content will not fit a narrow window.
+      */}
+      <Tabs defaultValue="general" orientation="vertical" className="md:flex md:gap-6 md:items-start">
+        <TabsList
+          className="
+            w-full flex justify-start overflow-x-auto
+            md:w-52 lg:w-56 md:flex-shrink-0 md:flex-col md:h-auto md:overflow-visible
+            md:bg-transparent md:p-0 md:gap-0.5 md:sticky md:top-24
+          "
+        >
+          {SETTINGS_SECTIONS.map((s) => (
+            <TabsTrigger
+              key={s.id}
+              value={s.id}
+              className="
+                flex-shrink-0
+                md:w-full md:justify-start md:items-start md:gap-2.5 md:rounded-lg md:px-3 md:py-2.5 md:text-left
+                md:data-[state=active]:bg-primary/10 md:data-[state=active]:text-primary md:data-[state=active]:shadow-none
+              "
+            >
+              <s.icon size={15} className="hidden md:block mt-0.5 flex-shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium truncate">{s.label}</span>
+                <span className="hidden md:block text-[11px] opacity-70 truncate font-normal">{s.hint}</span>
+              </span>
+            </TabsTrigger>
+          ))}
         </TabsList>
 
-        <TabsContent value="general" className="space-y-3 pt-3">
+        <div className="flex-1 min-w-0 max-w-3xl pt-4 md:pt-0">
+        <TabsContent value="general" className="space-y-3 mt-0">
           <Section icon={Palette} title="Appearance">
             <Row label="Theme" hint="Follows Windows unless you pick one.">
               <ThemePicker />
@@ -239,19 +270,19 @@ export default function SettingsPage() {
           </Section>
         </TabsContent>
 
-        <TabsContent value="accounts" className="pt-3">
+        <TabsContent value="accounts" className="mt-0">
           <AccountsEditor />
         </TabsContent>
 
-        <TabsContent value="categories" className="pt-3">
+        <TabsContent value="categories" className="mt-0">
           <CategoriesEditor />
         </TabsContent>
 
-        <TabsContent value="rules" className="pt-3">
+        <TabsContent value="rules" className="mt-0">
           <RulesEditor />
         </TabsContent>
 
-        <TabsContent value="data" className="space-y-3 pt-3">
+        <TabsContent value="data" className="space-y-3 mt-0">
           {/* Live status, rather than the old hardcoded (and now untrue)
               claim that everything lives in the browser's IndexedDB. */}
           <SecurityPanel />
@@ -277,12 +308,13 @@ export default function SettingsPage() {
             Erase all local data
           </Button>
         </TabsContent>
+        </div>
       </Tabs>
     </div>
   );
 }
 
-function CategoriesEditor() {
+export function CategoriesEditor() {
   const { categories, settings, upsertCategory, deleteCategory } = useApp();
   const [editing, setEditing] = useState<Category | null>(null);
 
@@ -430,7 +462,7 @@ function CategoryDialog({ cat, onClose, onSave }: { cat: Category; onClose: () =
   );
 }
 
-function RulesEditor() {
+export function RulesEditor() {
   const { rules, categories, upsertRule, deleteRule } = useApp();
   const [test, setTest] = useState("");
   const [editing, setEditing] = useState<Rule | null>(null);
@@ -598,7 +630,7 @@ function RulesEditor() {
   );
 }
 
-function DataBackup() {
+export function DataBackup() {
   const store = useApp();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);

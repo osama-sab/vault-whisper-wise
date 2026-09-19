@@ -1,7 +1,8 @@
-const { app, BrowserWindow, Menu, dialog, session, protocol, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, session, protocol, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { registerVaultIpc, registerQuitFlush } = require('./vault-ipc.cjs');
+const { clampBounds, MIN_WIDTH, MIN_HEIGHT } = require('./window-state.cjs');
 
 /** Content types for the files the renderer bundle actually ships. */
 const MIME = {
@@ -65,12 +66,64 @@ protocol.registerSchemesAsPrivileged([{
   privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true }
 }]);
 
+/** Where the remembered size and position live. */
+function statePath() {
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+
+function readWindowState() {
+  try {
+    return JSON.parse(fs.readFileSync(statePath(), 'utf8'));
+  } catch {
+    return null; // first run, or a file we cannot trust
+  }
+}
+
+/**
+ * Save on a debounce: resizing fires continuously, and writing on every frame
+ * would mean hundreds of disk writes for one drag.
+ */
+let saveTimer = null;
+function trackWindowState(win) {
+  const write = () => {
+    if (win.isDestroyed()) return;
+    try {
+      // isMaximized/isFullScreen report false while minimised, so a minimised
+      // window would otherwise be remembered at its restored-but-tiny bounds.
+      if (win.isMinimized()) return;
+      const maximized = win.isMaximized();
+      const fullScreen = win.isFullScreen();
+      // getNormalBounds is the size to return to, not the maximised frame.
+      const bounds = win.getNormalBounds();
+      fs.writeFileSync(statePath(), JSON.stringify({ ...bounds, maximized, fullScreen }), 'utf8');
+    } catch { /* a failed write must never break the app */ }
+  };
+
+  const schedule = () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(write, 400);
+  };
+
+  for (const event of ['resize', 'move', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) {
+    win.on(event, schedule);
+  }
+  // A debounced write can still be pending when the window goes away.
+  win.on('close', () => { if (saveTimer) clearTimeout(saveTimer); write(); });
+}
+
 function createWindow() {
+  const saved = readWindowState();
+  // Fitted to the displays that exist right now, so a window saved on a
+  // monitor that is no longer attached still comes back reachable.
+  const bounds = clampBounds(saved, screen.getAllDisplays(), {
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
+  });
+
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 800,
-    minHeight: 600,
+    ...bounds,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -96,8 +149,14 @@ function createWindow() {
   win.loadURL('app://./index.html');
 
   win.once('ready-to-show', () => {
+    // Restore maximised/full-screen AFTER the bounds, so leaving that state
+    // returns to the remembered size rather than a default.
+    if (saved?.fullScreen) win.setFullScreen(true);
+    else if (saved?.maximized) win.maximize();
     win.show();
   });
+
+  trackWindowState(win);
 
   // Open any external link in the real browser rather than inside the app.
   win.webContents.setWindowOpenHandler(({ url: target }) => {

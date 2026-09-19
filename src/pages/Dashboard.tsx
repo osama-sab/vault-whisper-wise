@@ -117,7 +117,9 @@ export default function Dashboard() {
         <p className="text-3xl font-bold mt-1 tabular-nums">
           <DiscreetText fallback="••••">{formatMoney(leftToSpend, settings.currency)}</DiscreetText>
         </p>
-        <div className="flex justify-between mt-4 text-xs opacity-90">
+        {/* Three related figures, kept together. justify-between flung them to
+            opposite edges of a wide window, so they stopped reading as a set. */}
+        <div className="grid grid-cols-3 gap-6 mt-4 text-xs opacity-90 max-w-xl">
           <div>
             <p className="opacity-70">Income</p>
             <p className="font-semibold tabular-nums">
@@ -139,7 +141,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
         <SummaryCard icon={TrendingUp} label="Income" value={totals.income} color="text-income" currency={settings.currency} />
         <SummaryCard icon={TrendingDown} label="Expenses" value={totals.expenses} color="text-expense" currency={settings.currency} />
         <SummaryCard icon={Wallet} label="Bills" value={totals.bills} color="text-bills" currency={settings.currency} />
