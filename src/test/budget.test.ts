@@ -113,3 +113,43 @@ describe("buildLedger", () => {
     expect(rows[1].closing).toBe(1000); // 1300 − 300
   });
 });
+
+describe("reconcileMonth with explicit bill payments", () => {
+  const gym = sub({ id: "gym", name: "Gym", expectedAmount: 30, categoryId: "bill" });
+  const mag = sub({ id: "mag", name: "Magazine", expectedAmount: 32, categoryId: "bill" });
+
+  it("an explicit link beats the amount heuristic", () => {
+    // Both subscriptions are within tolerance of the one transaction, so
+    // without a link the heuristic would hand it to whichever came first.
+    const t = tx({ id: "paid-mag", amount: 32, categoryId: "bill" });
+    const r = reconcileMonth([t], cats, [gym, mag], [
+      { id: "mag-2026-3", subscriptionId: "mag", year: 2026, month: 3, paid: true, transactionId: "paid-mag" },
+    ]);
+    expect(r.fulfilled.map((s) => s.id)).toContain("mag");
+    expect(r.outstanding.map((s) => s.id)).toEqual(["gym"]);
+    expect(r.stillExpected).toBe(30);
+  });
+
+  it("a linked transaction cannot also settle a different subscription", () => {
+    const t = tx({ id: "paid-mag", amount: 32, categoryId: "bill" });
+    const r = reconcileMonth([t], cats, [mag, gym], [
+      { id: "mag-2026-3", subscriptionId: "mag", year: 2026, month: 3, paid: true, transactionId: "paid-mag" },
+    ]);
+    expect(r.fulfilled.map((s) => s.id)).toEqual(["mag"]);
+    expect(r.outstanding.map((s) => s.id)).toEqual(["gym"]);
+  });
+
+  it("ignores a payment marked unpaid", () => {
+    const r = reconcileMonth([], cats, [gym], [
+      { id: "gym-2026-3", subscriptionId: "gym", year: 2026, month: 3, paid: false },
+    ]);
+    expect(r.outstanding).toHaveLength(1);
+    expect(r.stillExpected).toBe(30);
+  });
+
+  it("behaves exactly as before when no payments are passed", () => {
+    const r = reconcileMonth([tx({ amount: 30, categoryId: "bill" })], cats, [gym]);
+    expect(r.fulfilled).toHaveLength(1);
+    expect(r.stillExpected).toBe(0);
+  });
+});

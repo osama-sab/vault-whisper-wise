@@ -1,4 +1,4 @@
-import type { Transaction, Category, Subscription, ProfileFilter, Account, AccountStatement } from "./types";
+import type { Transaction, Category, Subscription, ProfileFilter, Account, AccountStatement, BillPayment } from "./types";
 import { isInMonth } from "./format";
 
 /**
@@ -61,7 +61,13 @@ function fulfils(t: Transaction, s: Subscription): boolean {
 export function reconcileMonth(
   monthTx: Transaction[],
   categories: Category[],
-  subscriptions: Subscription[]
+  subscriptions: Subscription[],
+  /**
+   * Explicit "this bill was paid by that transaction" links, which take
+   * priority over the amount heuristic below. Without them a Spotify charge
+   * could settle a gym membership just because the amounts were close.
+   */
+  billPayments: BillPayment[] = []
 ): MonthReconciliation {
   const catMap = new Map(categories.map((c) => [c.id, c]));
   const byCategory = new Map<string, CategoryTotal>();
@@ -88,7 +94,18 @@ export function reconcileMonth(
   const fulfilled: Subscription[] = [];
   const outstanding: Subscription[] = [];
 
+  // An explicit link beats the heuristic, and claims its transaction first so
+  // the heuristic cannot hand the same one to a different subscription.
+  const paid = new Map<string, string | undefined>();
+  for (const p of billPayments) {
+    if (p.paid) paid.set(p.subscriptionId, p.transactionId);
+  }
+  for (const t of monthTx) {
+    for (const [, txId] of paid) if (txId === t.id) claimed.add(t.id);
+  }
+
   for (const s of subscriptions.filter((x) => x.active)) {
+    if (paid.has(s.id)) { fulfilled.push(s); continue; }
     const hit = monthTx.find((t) => !claimed.has(t.id) && fulfils(t, s));
     if (hit) {
       claimed.add(hit.id);

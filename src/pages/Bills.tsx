@@ -6,7 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
 import { uid } from "@/lib/db";
 import { MerchantLogo } from "@/components/MerchantLogo";
 import type { ProfileId, Subscription } from "@/lib/types";
@@ -14,7 +15,10 @@ import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function BillsPage() {
-  const { subscriptions, categories, settings, upsertSubscription, deleteSubscription } = useApp();
+  const {
+    subscriptions, categories, settings, billPayments, accounts,
+    upsertSubscription, deleteSubscription, upsertTransaction, upsertBillPayment,
+  } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Subscription | null>(null);
   const [month, setMonth] = useState(() => {
@@ -41,6 +45,38 @@ export default function BillsPage() {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   while (cells.length % 7 !== 0) cells.push(null);
   const today = new Date();
+
+  const paymentKey = (subId: string) => `${subId}-${month.getFullYear()}-${month.getMonth()}`;
+  const isPaid = (subId: string) => billPayments.some((p) => p.id === paymentKey(subId) && p.paid);
+
+  async function markPaid(s: Subscription) {
+    if (isPaid(s.id)) return;
+    const day = Math.min(s.dueDay, new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate());
+    const date = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const txId = uid();
+
+    await upsertTransaction({
+      id: txId,
+      date,
+      amount: s.expectedAmount,
+      categoryId: s.categoryId,
+      profile: s.profile,
+      payee: s.name,
+      description: "Recurring payment",
+      isVague: false,
+      accountId: accounts.find((a) => a.profileDefault === s.profile)?.id ?? accounts[0]?.id,
+    });
+    await upsertBillPayment({
+      id: paymentKey(s.id),
+      subscriptionId: s.id,
+      year: month.getFullYear(),
+      month: month.getMonth(),
+      paid: true,
+      actualAmount: s.expectedAmount,
+      transactionId: txId,
+    });
+    toast.success(`${s.name} recorded for ${month.toLocaleDateString(undefined, { month: "long" })}`);
+  }
 
   const subsByDay = useMemo(() => {
     const m = new Map<number, typeof activeSubs>();
@@ -93,6 +129,10 @@ export default function BillsPage() {
         </div>
       </div>
 
+      {/* Marking a bill paid creates a REAL transaction and links it, closing
+          the loop the billPayments store was designed for but never used. The
+          explicit link also stops reconcileMonth's amount heuristic from
+          attributing the payment to a different subscription. */}
       {/* Subscriptions list */}
       <div className="flex justify-between items-center">
         <div>
@@ -131,7 +171,18 @@ export default function BillsPage() {
                     Due day {s.dueDay} · {c?.name || "—"} · {s.profile === "household" ? "Household" : "Personal"}
                   </p>
                 </button>
-                <p className="font-semibold">{formatMoney(s.expectedAmount, settings.currency)}</p>
+                <p className="font-semibold tabular-nums">{formatMoney(s.expectedAmount, settings.currency)}</p>
+                {s.active && (
+                  <button
+                    onClick={() => markPaid(s)}
+                    disabled={isPaid(s.id)}
+                    title={isPaid(s.id) ? "Already recorded for this month" : "Record this month's payment"}
+                    aria-label={isPaid(s.id) ? "Already paid" : "Mark paid"}
+                    className={cn("p-1", isPaid(s.id) ? "text-success" : "text-muted-foreground hover:text-success")}
+                  >
+                    <CheckCircle2 size={15} />
+                  </button>
+                )}
                 <button onClick={() => { setEditing(s); setOpen(true); }} className="text-muted-foreground p-1" aria-label="Edit"><Pencil size={14} /></button>
                 <button onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteSubscription(s.id); }} className="text-muted-foreground p-1" aria-label="Delete"><Trash2 size={14} /></button>
               </div>

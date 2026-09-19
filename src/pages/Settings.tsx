@@ -14,6 +14,8 @@ import { applyRules } from "@/lib/rules";
 import { formatMoney, isValidCurrency, isoFromDate, profileLabel } from "@/lib/format";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import SecurityPanel from "@/components/SecurityPanel";
+import AccountsEditor from "@/components/AccountsEditor";
 
 const TYPE_LABELS: Record<CategoryType, string> = {
   income: "Income",
@@ -42,8 +44,11 @@ export default function SettingsPage() {
   return (
     <div className="space-y-4">
       <Tabs defaultValue="general">
-        <TabsList className="w-full grid grid-cols-4">
+        {/* Accounts lives here rather than in the bottom nav, which is already
+            five tabs and crowded on a narrow window. */}
+        <TabsList className="w-full grid grid-cols-5">
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="categories">Categories</TabsTrigger>
           <TabsTrigger value="rules">Auto-Tag</TabsTrigger>
           <TabsTrigger value="data">Data</TabsTrigger>
@@ -102,6 +107,10 @@ export default function SettingsPage() {
           </Link>
         </TabsContent>
 
+        <TabsContent value="accounts" className="pt-3">
+          <AccountsEditor />
+        </TabsContent>
+
         <TabsContent value="categories" className="pt-3">
           <CategoriesEditor />
         </TabsContent>
@@ -111,13 +120,9 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="data" className="space-y-3 pt-3">
-          <div className="bg-card rounded-2xl border border-border p-4 space-y-2">
-            <p className="font-medium">Where is my data stored?</p>
-            <p className="text-xs text-muted-foreground">
-              All data lives locally in your browser's IndexedDB. Nothing is uploaded.
-              Use the backup buttons below to save or restore your data.
-            </p>
-          </div>
+          {/* Live status, rather than the old hardcoded (and now untrue)
+              claim that everything lives in the browser's IndexedDB. */}
+          <SecurityPanel />
 
           <DataBackup />
 
@@ -523,17 +528,23 @@ function DataBackup() {
 
   return (
     <div className="bg-card rounded-2xl border border-border p-4 space-y-3">
-      <p className="font-medium">Backup & restore</p>
+      <p className="font-medium">Plain JSON copy</p>
       <p className="text-xs text-muted-foreground">
-        Export all your data (transactions, categories, subscriptions, rules) as a JSON file.
-        Import it later to restore or transfer to a new device/version.
+        The same data as a readable JSON file, for moving it into another tool or inspecting it
+        yourself.
+      </p>
+      {/* Named unmistakably: it sits right under the encrypted backup, and the
+          two must never be mistaken for each other. */}
+      <p className="text-[11px] text-destructive">
+        Not encrypted — anyone who opens this file can read every transaction. Prefer the
+        encrypted backup above for keeping or transferring your data.
       </p>
       <div className="grid grid-cols-2 gap-2">
         <Button variant="outline" onClick={exportBackup} disabled={busy}>
-          Export backup
+          Export unencrypted
         </Button>
         <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={busy}>
-          {busy ? "Restoring…" : "Import backup"}
+          {busy ? "Restoring…" : "Import JSON"}
         </Button>
       </div>
       <input ref={fileRef} type="file" accept=".json" className="hidden"

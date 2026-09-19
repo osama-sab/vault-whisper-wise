@@ -10,7 +10,7 @@ import ExportDialog from "@/components/ExportDialog";
 import CashflowChart from "@/components/CashflowChart";
 
 export default function Dashboard() {
-  const { transactions, categories, subscriptions, settings } = useApp();
+  const { transactions, categories, subscriptions, settings, billPayments } = useApp();
   const [month, setMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -39,8 +39,8 @@ export default function Dashboard() {
    * month's total twice.
    */
   const recon = useMemo(
-    () => reconcileMonth(monthTx, categories, profileSubs),
-    [monthTx, categories, profileSubs]
+    () => reconcileMonth(monthTx, categories, profileSubs, billPayments),
+    [monthTx, categories, profileSubs, billPayments]
   );
 
   const totals = useMemo(() => {

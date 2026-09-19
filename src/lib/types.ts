@@ -81,6 +81,8 @@ export interface BillPayment {
   month: number; // 0-11
   paid: boolean;
   actualAmount?: number;
+  /** The transaction created when this bill was marked paid, if any. */
+  transactionId?: string;
 }
 
 export interface Rule {
