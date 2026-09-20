@@ -25,7 +25,9 @@
   "build": {
     "appId": "com.pocketmoney.app",
     "productName": "Pocket Money",
-    "directories": { "output": "release" },
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -34,7 +36,14 @@
       "!node_modules/**/*"
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "public/favicon.ico"
     },
     "nsis": {
@@ -53,7 +62,9 @@
       "category": "public.app-category.finance"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "icon": "public/favicon.ico",
       "category": "Office"
     }
@@ -135,7 +146,6 @@
     "fflate": "^0.8.3",
     "globals": "^15.15.0",
     "jsdom": "^29.1.1",
-    "lovable-tagger": "^1.1.13",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3",
