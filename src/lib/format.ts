@@ -14,6 +14,23 @@ export function formatMoney(n: number, currency = "EUR") {
   }
 }
 
+/**
+ * Just the symbol for a currency ("€", "$", "kr").
+ *
+ * For adorning an input where a full formatted amount would be wrong but a
+ * bare number is ambiguous. Falls back to the code itself, which is always
+ * meaningful even when a symbol is not available.
+ */
+export function currencySymbol(currency = "EUR"): string {
+  try {
+    const parts = new Intl.NumberFormat(undefined, { style: "currency", currency })
+      .formatToParts(0);
+    return parts.find((p) => p.type === "currency")?.value ?? currency;
+  } catch {
+    return (currency || "").trim();
+  }
+}
+
 /** True for a well-formed ISO 4217 code, which is all Intl will accept. */
 export function isValidCurrency(code: string): boolean {
   if (!/^[A-Za-z]{3}$/.test(code || "")) return false;

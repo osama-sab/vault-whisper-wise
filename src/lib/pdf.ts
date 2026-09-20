@@ -3,7 +3,7 @@ import autoTable, { type RowInput, type Styles, type UserOptions } from "jspdf-a
 import type { Category, Transaction, Subscription, ProfileFilter, ProfileId } from "./types";
 import { formatMoney, formatDate, profileLabel, monthKey } from "./format";
 import { downloadFile, exportTransactionsCSV } from "./csv";
-import { findMerchant } from "./merchants";
+import { brandTones, findMerchant } from "./merchants";
 import { buildLedger, filterByProfile, type MonthLedgerRow } from "./budget";
 import { buildXLSX, type Sheet } from "./xlsx";
 
@@ -67,8 +67,11 @@ function payeeOf(t: Transaction, cat: Category | undefined, hide: boolean): stri
 }
 
 function descriptionOf(t: Transaction, hide: boolean): string {
-  // A vague transaction carries no description at all — that is the point.
-  return hide ? "" : (t.description || "");
+  // A vague transaction carries no description — that is the point of marking
+  // it vague. It still gets an em dash rather than an empty cell: blank reads
+  // as "the report failed to fill this in", and every other absent value in
+  // the document already says "—".
+  return hide ? "\u2014" : (t.description || "\u2014");
 }
 
 function openingFor(profile: ProfileFilter, balances: Record<ProfileId, number>): number {
@@ -214,14 +217,6 @@ function money(n: number, currency: string) {
   return formatMoney(n, currency);
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace("#", "");
-  return [
-    parseInt(h.slice(0, 2), 16) || 0,
-    parseInt(h.slice(2, 4), 16) || 0,
-    parseInt(h.slice(4, 6), 16) || 0,
-  ];
-}
 
 // ─── PDF ───────────────────────────────────────────────
 
@@ -304,12 +299,12 @@ async function generatePDF(opts: ExportOptions) {
         ...(isCombined ? [{ header: "Profile", width: 22 } as ColSpec] : []),
         { header: "Credit", align: "right" },
         { header: "Debit", align: "right" },
-        { header: "Budget", align: "right" },
-        { header: "vs Budget", align: "right" },
+        { header: "Monthly limit", align: "right" },
+        { header: "Over / under", align: "right" },
       ];
       const iCredit = colIndex(cols, "Credit");
       const iDebit = colIndex(cols, "Debit");
-      const iVar = colIndex(cols, "vs Budget");
+      const iVar = colIndex(cols, "Over / under");
 
       const body: RowInput[] = [];
       const meta: ({ credit: number; debit: number; over: boolean } | null)[] = [];
@@ -370,9 +365,12 @@ async function generatePDF(opts: ExportOptions) {
         const hide = isHidden(t, discreet);
         return {
           isIncome,
-          // Carried so the Payee column can be tagged with the brand colour.
-          // A vague row deliberately shows no merchant identity.
+          // Carried so the Payee column can be marked. A vague row
+          // deliberately shows no merchant identity at all.
           merchant: hide ? null : findMerchant(t.payee),
+          // The initial to fall back on when the payee is not a merchant we
+          // know, so every visible row gets the same shaped mark.
+          initial: hide ? "" : (t.payee || t.description || "").trim().charAt(0).toUpperCase(),
           cells: [
             formatDate(t.date, { day: "2-digit", month: "short" }),
             isIncome ? "Credit" : "Debit",
@@ -390,8 +388,8 @@ async function generatePDF(opts: ExportOptions) {
       const cols: ColSpec[] = [
         { header: "Date", width: 15 },
         { header: "Type", width: 13 },
-        // Left padding leaves room for the merchant colour tag drawn below.
-        { header: "Payee", width: 33, padding: { top: 1.8, bottom: 1.8, left: 4.2, right: 1.8 } },
+        // Left padding leaves room for the merchant chip drawn below.
+        { header: "Payee", width: 36, padding: { top: 1.8, bottom: 1.8, left: 6.4, right: 1.8 } },
         { header: "Category", width: 25 },
         ...(isCombined ? [{ header: "Profile", width: 18 } as ColSpec] : []),
         { header: "Description" },
@@ -413,16 +411,40 @@ async function generatePDF(opts: ExportOptions) {
             data.cell.styles.fontStyle = "bold";
           }
         },
-        // Brand identity in the report, which previously had none at all: a
-        // colour tag beside each recognised merchant, so the statement can be
-        // scanned by eye the way the app's transaction list can.
+        // The same monogram chip the app draws beside a payee.
+        //
+        // This was a bare 2mm colour swatch, which read as a logo that had
+        // failed to load — a coloured box next to "OBI" says nothing about
+        // OBI. A tinted tile carrying the merchant's initials is the app's own
+        // mark, and it is legible in one ink on paper.
         didDrawCell(data) {
           if (data.section !== "body" || data.column.index !== iPayee) return;
-          const m = detail[data.row.index]?.merchant;
-          if (!m) return;
-          const [r, g, b] = hexToRgb(m.color);
-          doc.setFillColor(r, g, b);
-          doc.roundedRect(data.cell.x + 1.3, data.cell.y + data.cell.height / 2 - 1.3, 2, 2.6, 0.5, 0.5, "F");
+          const d = detail[data.row.index];
+          if (!d || (!d.merchant && !d.initial)) return;
+
+          const SIZE = 4;
+          const x = data.cell.x + 1.3;
+          const y = data.cell.y + data.cell.height / 2 - SIZE / 2;
+
+          const tones = d.merchant ? brandTones(d.merchant.color) : null;
+          const [bgR, bgG, bgB] = tones ? tones.bgPrint : [237, 240, 241];
+          const [fgR, fgG, fgB] = tones ? tones.fgPrint : [90, 100, 104];
+          const label = d.merchant ? d.merchant.abbrev : d.initial;
+
+          doc.setFillColor(bgR, bgG, bgB);
+          doc.roundedRect(x, y, SIZE, SIZE, 1.1, 1.1, "F");
+
+          // Saved and restored: autoTable draws the rest of the row with
+          // whatever state it finds, so leaking a 4pt bold brand colour into
+          // the next cell would repaint half the table.
+          const prevSize = doc.getFontSize();
+          doc.setFontSize(label.length > 2 ? 3.4 : 4.2);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(fgR, fgG, fgB);
+          doc.text(label, x + SIZE / 2, y + SIZE / 2, { align: "center", baseline: "middle" });
+          doc.setFontSize(prevSize);
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(0, 0, 0);
         },
         // The running balance belongs with the detail it explains, so it is a
         // real footer row. The old version printed it as loose text and threw

@@ -6,13 +6,17 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react";
+import { Plus, Pencil, Trash2, CalendarDays, Repeat, Check, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { uid } from "@/lib/db";
 import { MerchantLogo } from "@/components/MerchantLogo";
+import { CategorySelect } from "@/components/CategorySelect";
 import type { ProfileId, Subscription } from "@/lib/types";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  Card, CardHead, MonthStepper, IconButton, FieldLabel, EmptyState, Note,
+} from "@/components/ui/surface";
 
 export default function BillsPage() {
   const {
@@ -45,6 +49,7 @@ export default function BillsPage() {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   while (cells.length % 7 !== 0) cells.push(null);
   const today = new Date();
+  const isThisMonth = today.getMonth() === month.getMonth() && today.getFullYear() === month.getFullYear();
 
   const paymentKey = (subId: string) => `${subId}-${month.getFullYear()}-${month.getMonth()}`;
   const isPaid = (subId: string) => billPayments.some((p) => p.id === paymentKey(subId) && p.paid);
@@ -87,109 +92,290 @@ export default function BillsPage() {
     return m;
   }, [activeSubs, daysInMonth]);
 
+  const paidCount = activeSubs.filter((s) => isPaid(s.id)).length;
+  const paidTotal = activeSubs.filter((s) => isPaid(s.id)).reduce((sum, s) => sum + s.expectedAmount, 0);
+  const outstanding = total - paidTotal;
+
+  /** The next few bills still to land, counted from today when we are in this month. */
+  const upcoming = useMemo(() => {
+    const from = isThisMonth ? today.getDate() : 1;
+    return activeSubs
+      .filter((s) => !isPaid(s.id) && Math.min(s.dueDay, daysInMonth) >= from)
+      .sort((a, b) => a.dueDay - b.dueDay)
+      .slice(0, 4);
+    // billPayments is read through isPaid, so it belongs in the deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSubs, billPayments, daysInMonth, isThisMonth, month]);
+
+  const addButton = (
+    <Button size="sm" className="rounded-full" onClick={() => { setEditing(null); setOpen(true); }}>
+      <Plus size={15} className="mr-1" /> Add
+    </Button>
+  );
+
   return (
     <div className="space-y-4">
-      {/* Month nav + calendar */}
-      <div className="flex items-center justify-between">
-        <button className="p-2 rounded-full bg-secondary" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}><ChevronLeft size={16} /></button>
-        <p className="font-semibold">{month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</p>
-        <button className="p-2 rounded-full bg-secondary" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight size={16} /></button>
+      {/* Scope left, action right — the same toolbar shape as every other page.
+          This row used to be `justify-between` across the whole window, which
+          is how the two arrows ended up at opposite edges of the screen. */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <MonthStepper month={month} onChange={setMonth} />
+        {addButton}
       </div>
 
-      <div className="bg-card rounded-2xl border border-hairline shadow-card p-2">
-        <div className="grid grid-cols-7 text-[10px] text-center text-muted-foreground font-medium pb-1">
-          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => <div key={d}>{d}</div>)}
-        </div>
-        <div className="grid grid-cols-7 gap-1">
-          {cells.map((d, i) => {
-            const isToday = d === today.getDate() && today.getMonth() === month.getMonth() && today.getFullYear() === month.getFullYear();
-            const isPayday = d != null && settings.paydays.includes(d);
-            const billsHere = d != null ? subsByDay.get(d) || [] : [];
-            return (
-              <div key={i} className={cn("min-h-[4.5rem] rounded-lg border text-[11px] p-1.5 flex flex-col gap-1",
-                d == null ? "border-transparent" : "border-border", isToday && "border-primary bg-primary/5")}>
-                {d != null && (
-                  <div className="flex justify-between items-center">
-                    <span className={cn("font-semibold", isToday && "text-primary")}>{d}</span>
-                    {isPayday && <span className="w-1.5 h-1.5 rounded-full bg-income" title="Payday" />}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px] items-start">
+        {/* ── Calendar ───────────────────────────────── */}
+        <Card>
+          <CardHead
+            icon={CalendarDays}
+            title={month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+            hint={`${activeSubs.length} recurring ${activeSubs.length === 1 ? "bill" : "bills"} this month`}
+            action={
+              <span className="hidden sm:flex items-center gap-3 text-[11px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-bills" /> Bill due
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-income" /> Payday
+                </span>
+              </span>
+            }
+          />
+
+          <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+              <div key={d} className="eyebrow text-center">{d}</div>
+            ))}
+          </div>
+
+          {/* Fixed-height cells in a tight grid. They used to be bordered boxes
+              that stretched with the window, so a month of bills read as a
+              wall of empty rectangles. */}
+          <div className="grid grid-cols-7 gap-1.5">
+            {cells.map((d, i) => {
+              const isToday = isThisMonth && d === today.getDate();
+              const isPayday = d != null && settings.paydays.includes(d);
+              const billsHere = d != null ? subsByDay.get(d) || [] : [];
+              const shown = billsHere.slice(0, 2);
+
+              if (d == null) return <div key={i} className="min-h-[4.25rem]" aria-hidden />;
+
+              return (
+                <div
+                  key={i}
+                  className={cn(
+                    "min-h-[4.25rem] rounded-xl p-1.5 flex flex-col gap-1 transition-colors",
+                    billsHere.length > 0 ? "bg-bills/[0.07]" : "bg-secondary/45",
+                    isToday && "ring-2 ring-primary bg-primary/[0.07]"
+                  )}
+                >
+                  <div className="flex justify-between items-center gap-1">
+                    <span
+                      className={cn(
+                        "text-[11px] font-semibold tabular-nums leading-none",
+                        isToday
+                          ? "inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground"
+                          : "text-muted-foreground pl-0.5"
+                      )}
+                    >
+                      {d}
+                    </span>
+                    {isPayday && <span className="w-1.5 h-1.5 rounded-full bg-income flex-shrink-0" title="Payday" />}
                   </div>
-                )}
-                <div className="flex flex-wrap gap-0.5">
-                  {billsHere.map(s => (
-                    <div key={s.id}
-                      title={`${s.name} ${formatMoney(s.expectedAmount, settings.currency)}`}
-                      className="w-full text-[9px] truncate rounded px-1 leading-tight bg-bills/20 text-bills">
-                      {s.name}
-                    </div>
-                  ))}
+
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    {shown.map((s) => (
+                      <span
+                        key={s.id}
+                        title={`${s.name} · ${formatMoney(s.expectedAmount, settings.currency)}`}
+                        className={cn(
+                          "text-[9.5px] leading-[1.35] truncate rounded px-1 py-px",
+                          isPaid(s.id)
+                            ? "bg-success/15 text-success line-through decoration-1"
+                            : "bg-bills/20 text-bills"
+                        )}
+                      >
+                        {s.name}
+                      </span>
+                    ))}
+                    {billsHere.length > shown.length && (
+                      <span className="text-[9.5px] text-muted-foreground px-1">
+                        +{billsHere.length - shown.length} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+
+        {/* ── The month in figures ───────────────────── */}
+        <div className="space-y-3">
+          <Card>
+            <CardHead icon={Wallet} title="This month" />
+            <div className="space-y-3">
+              <div>
+                <FieldLabel>Total recurring</FieldLabel>
+                <p className="text-[22px] font-semibold tabular-nums tracking-tight leading-none mt-1">
+                  {formatMoney(total, settings.currency)}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-hairline">
+                <div className="min-w-0">
+                  <FieldLabel>Paid</FieldLabel>
+                  <p className="text-sm font-semibold tabular-nums text-success mt-0.5 truncate">
+                    {formatMoney(paidTotal, settings.currency)}
+                  </p>
+                  <p className="text-[10.5px] text-muted-foreground">{paidCount} of {activeSubs.length}</p>
+                </div>
+                <div className="min-w-0">
+                  <FieldLabel>Outstanding</FieldLabel>
+                  <p className="text-sm font-semibold tabular-nums text-bills mt-0.5 truncate">
+                    {formatMoney(outstanding, settings.currency)}
+                  </p>
+                  <p className="text-[10.5px] text-muted-foreground">{activeSubs.length - paidCount} left</p>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          </Card>
+
+          <Card>
+            <CardHead icon={Repeat} tone="bills" title="Next up" />
+            {upcoming.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Nothing else is due this month.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {upcoming.map((s) => (
+                  <div key={s.id} className="flex items-center gap-2.5 min-w-0">
+                    <MerchantLogo payee={s.name} size={28} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] font-medium truncate leading-tight">{s.name}</p>
+                      <p className="text-[10.5px] text-muted-foreground">Day {s.dueDay}</p>
+                    </div>
+                    <p className="text-[13px] font-semibold tabular-nums flex-shrink-0">
+                      {formatMoney(s.expectedAmount, settings.currency)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
         </div>
       </div>
 
+      {/* ── Subscriptions ─────────────────────────────── */}
       {/* Marking a bill paid creates a REAL transaction and links it, closing
           the loop the billPayments store was designed for but never used. The
           explicit link also stops reconcileMonth's amount heuristic from
           attributing the payment to a different subscription. */}
-      {/* Subscriptions list */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="font-semibold">Subscriptions & Recurring Bills</h2>
-          <p className="text-xs text-muted-foreground">
-            {activeSubs.length} active · {formatMoney(total, settings.currency)} per month
-          </p>
+      <Card flush>
+        <div className="p-5 pb-4">
+          <CardHead
+            icon={Repeat}
+            title="Subscriptions & recurring bills"
+            hint={`${activeSubs.length} active · ${formatMoney(total, settings.currency)} per month`}
+            action={addButton}
+            tight
+          />
         </div>
-        <Button size="sm" onClick={() => { setEditing(null); setOpen(true); }}>
-          <Plus size={16} className="mr-1" /> Add
-        </Button>
-      </div>
 
-      <p className="text-xs text-muted-foreground bg-card border border-hairline rounded-2xl shadow-raised p-3">
-        Active subscriptions are automatically deducted from your "Left to spend" each month.
-        Toggle a subscription off if you cancel it.
-      </p>
-
-      {allSubs.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-8 text-center">No subscriptions yet. Tap "Add" to create one.</p>
-      ) : (
-        <div className="bg-card rounded-2xl border border-hairline shadow-card divide-y divide-hairline">
-          {allSubs.map(s => {
-            const c = catMap.get(s.categoryId);
-            return (
-              <div key={s.id} className={cn("p-3 flex items-center gap-3", !s.active && "opacity-50")}>
-                <Switch
-                  checked={s.active}
-                  onCheckedChange={(v) => upsertSubscription({ ...s, active: v })}
-                  aria-label="Active"
-                />
-                <MerchantLogo payee={s.name} size={32} />
-                <button onClick={() => { setEditing(s); setOpen(true); }} className="flex-1 min-w-0 text-left">
-                  <p className="font-medium">{s.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Due day {s.dueDay} · {c?.name || "—"} · {s.profile === "household" ? "Household" : "Personal"}
-                  </p>
-                </button>
-                <p className="font-semibold tabular-nums">{formatMoney(s.expectedAmount, settings.currency)}</p>
-                {s.active && (
-                  <button
-                    onClick={() => markPaid(s)}
-                    disabled={isPaid(s.id)}
-                    title={isPaid(s.id) ? "Already recorded for this month" : "Record this month's payment"}
-                    aria-label={isPaid(s.id) ? "Already paid" : "Mark paid"}
-                    className={cn("p-1", isPaid(s.id) ? "text-success" : "text-muted-foreground hover:text-success")}
+        {allSubs.length === 0 ? (
+          <div className="px-5 pb-5">
+            <EmptyState icon={Repeat} title="No subscriptions yet" action={addButton}>
+              Add the things that leave your account on the same day each month — rent, Netflix,
+              insurance — and they show up on the calendar and in your budget.
+            </EmptyState>
+          </div>
+        ) : (
+          <>
+            <div className="divide-y divide-hairline border-t border-hairline">
+              {allSubs.map(s => {
+                const c = catMap.get(s.categoryId);
+                const paid = isPaid(s.id);
+                return (
+                  <div
+                    key={s.id}
+                    className={cn(
+                      "group px-5 py-3 flex items-center gap-3 transition-colors hover:bg-secondary/40",
+                      !s.active && "opacity-55"
+                    )}
                   >
-                    <CheckCircle2 size={15} />
-                  </button>
-                )}
-                <button onClick={() => { setEditing(s); setOpen(true); }} className="text-muted-foreground p-1" aria-label="Edit"><Pencil size={14} /></button>
-                <button onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteSubscription(s.id); }} className="text-muted-foreground p-1" aria-label="Delete"><Trash2 size={14} /></button>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                    <MerchantLogo payee={s.name} size={36} />
+
+                    <button
+                      onClick={() => { setEditing(s); setOpen(true); }}
+                      className="flex-1 min-w-0 text-left"
+                    >
+                      <p className="font-medium text-[14px] truncate leading-tight">{s.name}</p>
+                      <p className="text-[11.5px] text-muted-foreground truncate mt-0.5">
+                        Day {s.dueDay} · {c?.name || "—"} · {s.profile === "household" ? "Household" : "Personal"}
+                      </p>
+                    </button>
+
+                    <p className="font-semibold tabular-nums text-[14px] text-right flex-shrink-0 w-[5.5rem]">
+                      {formatMoney(s.expectedAmount, settings.currency)}
+                    </p>
+
+                    {/* One labelled status control rather than an unlabelled
+                        tick: it says what it will do, and what it did. */}
+                    <div className="w-[6.25rem] flex-shrink-0 flex justify-end">
+                      {s.active && (
+                        paid ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-success/15 text-success text-[11px] font-semibold px-2.5 py-1">
+                            <Check size={12} /> Paid
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => markPaid(s)}
+                            title="Record this month's payment"
+                            className="inline-flex items-center gap-1 rounded-full bg-secondary text-muted-foreground hover:bg-primary hover:text-primary-foreground text-[11px] font-semibold px-2.5 py-1 transition-colors"
+                          >
+                            Mark paid
+                          </button>
+                        )
+                      )}
+                    </div>
+
+                    {/* Reserved space, so nothing shifts when they appear. */}
+                    <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      <IconButton
+                        className="w-8 h-8"
+                        onClick={() => { setEditing(s); setOpen(true); }}
+                        aria-label={`Edit ${s.name}`}
+                      >
+                        <Pencil size={14} />
+                      </IconButton>
+                      <IconButton
+                        className="w-8 h-8"
+                        tone="danger"
+                        onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteSubscription(s.id); }}
+                        aria-label={`Delete ${s.name}`}
+                      >
+                        <Trash2 size={14} />
+                      </IconButton>
+                    </div>
+
+                    <Switch
+                      checked={s.active}
+                      onCheckedChange={(v) => upsertSubscription({ ...s, active: v })}
+                      aria-label={`${s.name} active`}
+                      className="flex-shrink-0"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="p-4">
+              <Note>
+                Active subscriptions are deducted from your “Left to spend” each month. Switch one
+                off if you cancel it — the history stays.
+              </Note>
+            </div>
+          </>
+        )}
+      </Card>
 
       <SubDialog open={open} onOpenChange={setOpen} editing={editing} />
     </div>
@@ -276,18 +462,13 @@ function SubDialog({ open, onOpenChange, editing }: {
 
           <div>
             <Label>Category</Label>
-            <Select value={categoryId} onValueChange={setCategoryId}>
-              <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
-              <SelectContent>
-                {filteredCats.length === 0 ? (
-                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                    No categories for {profile} — add one in Settings
-                  </div>
-                ) : (
-                  filteredCats.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)
-                )}
-              </SelectContent>
-            </Select>
+            <CategorySelect
+              categories={filteredCats}
+              profile={profile}
+              value={categoryId}
+              onChange={setCategoryId}
+              placeholder={`No categories for ${profile} — add one in Settings`}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">

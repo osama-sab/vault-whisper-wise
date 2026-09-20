@@ -1,8 +1,17 @@
 import { useState } from "react";
-import { Lock } from "lucide-react";
+import { Lock, ShieldCheck } from "lucide-react";
 import { useApp } from "@/lib/store";
+import { BrandMark } from "@/components/BrandMark";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
-/** Shown when the vault is protected by a passphrase and needs unlocking. */
+/**
+ * Shown when the vault is protected by a passphrase and needs unlocking.
+ *
+ * This is the first thing the app shows on a protected install, so it carries
+ * the mark and the panel treatment rather than being a bare form on a flat
+ * background.
+ */
 export default function PassphraseGate() {
   const unlock = useApp((s) => s.unlock);
   const [passphrase, setPassphrase] = useState("");
@@ -27,17 +36,27 @@ export default function PassphraseGate() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-background">
-      <form onSubmit={submit} className="max-w-sm w-full bg-card border border-border rounded-2xl p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Lock size={18} className="text-primary" />
-          <h1 className="font-semibold text-lg">Pocket Money is locked</h1>
+    <div className="min-h-screen flex items-center justify-center p-6 bg-ground">
+      <form
+        onSubmit={submit}
+        className="max-w-sm w-full bg-card border border-hairline rounded-panel shadow-panel p-6 space-y-4"
+      >
+        <div className="flex items-center gap-3">
+          <BrandMark size={40} />
+          <div className="min-w-0">
+            <h1 className="font-semibold text-[17px] tracking-tight leading-tight">Pocket Money</h1>
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Lock size={11} /> Locked
+            </p>
+          </div>
         </div>
+
         <p className="text-sm text-muted-foreground">
           Enter your passphrase to unlock your data on this computer.
         </p>
+
         <div>
-          <input
+          <Input
             type="password"
             autoFocus
             autoComplete="current-password"
@@ -45,20 +64,21 @@ export default function PassphraseGate() {
             onChange={(e) => setPassphrase(e.target.value)}
             placeholder="Passphrase"
             aria-label="Passphrase"
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            aria-invalid={!!error}
           />
           {error && <p className="text-xs text-destructive mt-1.5">{error}</p>}
         </div>
-        <button
-          type="submit"
-          disabled={!passphrase || busy}
-          className="w-full rounded-lg bg-primary text-primary-foreground text-sm font-medium py-2 disabled:opacity-50"
-        >
+
+        <Button type="submit" disabled={!passphrase || busy} className="w-full rounded-full">
           {busy ? "Unlocking…" : "Unlock"}
-        </button>
-        <p className="text-[11px] text-muted-foreground">
-          There is no way to recover a forgotten passphrase — your data cannot be decrypted without it.
-          If you have an encrypted backup, you can restore it after erasing this copy.
+        </Button>
+
+        <p className="text-[11px] text-muted-foreground flex items-start gap-1.5 leading-relaxed">
+          <ShieldCheck size={13} className="flex-shrink-0 mt-0.5 text-primary" />
+          <span>
+            There is no way to recover a forgotten passphrase — your data cannot be decrypted without
+            it. If you have an encrypted backup, you can restore it after erasing this copy.
+          </span>
         </p>
       </form>
     </div>

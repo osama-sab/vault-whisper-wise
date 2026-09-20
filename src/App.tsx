@@ -8,6 +8,7 @@ import { useApp } from "@/lib/store";
 import AppShell from "@/components/AppShell";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import PassphraseGate from "@/components/PassphraseGate";
+import { BrandMark } from "@/components/BrandMark";
 import Dashboard from "./pages/Dashboard";
 import TransactionsPage from "./pages/Transactions";
 import BillsPage from "./pages/Bills";
@@ -42,9 +43,10 @@ const App = () => {
           <Sonner />
           <HashRouter>
             {initError ? (
-              <div className="min-h-screen flex items-center justify-center p-6 bg-background">
-                <div className="max-w-md w-full bg-card border border-border rounded-2xl p-5 space-y-3">
-                  <h1 className="font-semibold text-lg">Pocket Money could not open your data</h1>
+              <div className="min-h-screen flex items-center justify-center p-6 bg-ground">
+                <div className="max-w-md w-full bg-card border border-hairline rounded-panel shadow-panel p-6 space-y-3">
+                  <BrandMark size={40} />
+                  <h1 className="font-semibold text-lg tracking-tight">Pocket Money could not open your data</h1>
                   <p className="text-sm text-muted-foreground">
                     The vault could not be opened, so your transactions cannot be loaded. Your data
                     has not been changed.
@@ -53,7 +55,7 @@ const App = () => {
                     {initError.message}
                   </pre>
                   <button
-                    className="w-full rounded-lg bg-primary text-primary-foreground text-sm font-medium py-2"
+                    className="w-full rounded-full bg-primary text-primary-foreground text-sm font-medium py-2.5 hover:bg-primary/90 transition-colors"
                     onClick={() => location.reload()}
                   >
                     Retry
@@ -63,8 +65,9 @@ const App = () => {
             ) : locked ? (
               <PassphraseGate />
             ) : !ready ? (
-              <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-                Loading…
+              <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-ground text-muted-foreground">
+                <BrandMark size={44} className="animate-pulse" />
+                <p className="text-sm">Opening your vault…</p>
               </div>
             ) : (
               <Routes>

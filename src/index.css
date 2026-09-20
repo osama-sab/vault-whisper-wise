@@ -2,123 +2,163 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
+/*
+  The design system.
+
+  The look is "panels on a tinted ground": the window floats a white sidebar
+  and a white content surface on a soft neutral wash, and every group of
+  information inside is a rounded card with an icon chip in its header. That
+  is what gives the app a shape of its own rather than the default
+  card-on-white admin template.
+
+  All colours MUST be HSL triples so Tailwind can compose them with opacity.
 */
 
 @layer base {
   :root {
-    --background: 200 30% 98%;
-    --foreground: 200 25% 12%;
+    /* The ground the panels float on — never used for text surfaces. */
+    --ground: 180 20% 95%;
+
+    --background: 0 0% 100%;
+    --foreground: 195 30% 11%;
 
     --card: 0 0% 100%;
-    --card-foreground: 200 25% 12%;
+    --card-foreground: 195 30% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 200 25% 12%;
+    --popover-foreground: 195 30% 11%;
 
     --primary: 173 80% 30%;
     --primary-foreground: 0 0% 100%;
     --primary-glow: 173 70% 45%;
+    /* A tint of the primary for chips and rails, so they do not have to be
+       written as primary/10 in fifty places and drift. */
+    --primary-soft: 173 55% 94%;
 
-    --secondary: 200 20% 94%;
-    --secondary-foreground: 200 25% 18%;
+    --secondary: 186 24% 93%;
+    --secondary-foreground: 195 28% 20%;
 
-    --muted: 200 20% 94%;
-    --muted-foreground: 200 12% 45%;
+    --muted: 186 24% 93%;
+    --muted-foreground: 197 12% 45%;
 
-    --accent: 173 60% 92%;
+    --accent: 173 55% 92%;
     --accent-foreground: 173 80% 22%;
 
-    --destructive: 0 75% 55%;
+    --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --success: 145 65% 40%;
+    --success: 152 58% 38%;
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;
+    --warning: 33 92% 48%;
     --warning-foreground: 0 0% 100%;
 
-    --income: 145 65% 40%;
-    --expense: 0 70% 55%;
-    --bills: 25 90% 55%;
-    --savings: 210 80% 50%;
-    --debt: 280 60% 55%;
+    --household: 212 72% 45%;
+    --personal: 280 55% 52%;
 
-    --border: 200 15% 88%;
-    --input: 200 15% 88%;
+    --income: 152 58% 38%;
+    --expense: 4 72% 54%;
+    --bills: 27 88% 52%;
+    --savings: 211 76% 50%;
+    --debt: 275 55% 55%;
+
+    --border: 190 18% 90%;
+    --input: 190 18% 88%;
     --ring: 173 80% 30%;
 
-    /* Elevation, not outlines. Cards read as raised surfaces on a tinted
-       ground rather than boxes drawn with a 1px border. */
-    --shadow-sm: 0 1px 2px 0 hsl(200 25% 12% / 0.04);
-    --shadow-card: 0 1px 2px 0 hsl(200 25% 12% / 0.04), 0 4px 16px -6px hsl(200 25% 12% / 0.10);
-    --shadow-raised: 0 2px 4px 0 hsl(200 25% 12% / 0.05), 0 12px 28px -10px hsl(200 25% 12% / 0.16);
-    --hairline: 200 20% 92%;
+    /* Elevation, not outlines. Panels read as raised surfaces on the ground
+       rather than boxes drawn with a 1px border. */
+    --shadow-sm: 0 1px 2px 0 hsl(195 30% 11% / 0.05);
+    --shadow-card: 0 1px 2px 0 hsl(195 30% 11% / 0.04), 0 6px 20px -12px hsl(195 30% 11% / 0.18);
+    --shadow-raised: 0 2px 4px 0 hsl(195 30% 11% / 0.05), 0 16px 34px -14px hsl(195 30% 11% / 0.22);
+    --shadow-panel: 0 1px 3px 0 hsl(195 30% 11% / 0.05), 0 24px 48px -28px hsl(195 30% 11% / 0.28);
+    --hairline: 190 20% 92%;
+
+    /* The one filled card on the dashboard. In light mode it is the primary
+       gradient; in dark mode a bright mint slab would be the loudest thing on
+       the screen, so it deepens instead and keeps white text. */
+    --hero-from: 173 80% 28%;
+    --hero-to: 173 66% 42%;
+    --hero-foreground: 0 0% 100%;
 
     --radius: 0.85rem;
 
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 197 15% 38%;
+    --sidebar-primary: 173 80% 30%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 185 22% 95%;
+    --sidebar-accent-foreground: 195 28% 20%;
+    --sidebar-border: 190 20% 92%;
+    --sidebar-ring: 173 80% 30%;
   }
 
   .dark {
-    --background: 200 30% 8%;
-    --foreground: 200 15% 92%;
-    --card: 200 25% 12%;
-    --card-foreground: 200 15% 92%;
-    --popover: 200 25% 12%;
-    --popover-foreground: 200 15% 92%;
-    --primary: 173 70% 45%;
-    --primary-foreground: 200 30% 8%;
-    --primary-glow: 173 80% 55%;
-    --secondary: 200 20% 18%;
-    --secondary-foreground: 200 15% 92%;
-    --muted: 200 20% 18%;
-    --muted-foreground: 200 12% 65%;
-    --accent: 173 40% 22%;
-    --accent-foreground: 173 70% 75%;
-    --destructive: 0 65% 50%;
+    --ground: 197 28% 7%;
+
+    --background: 197 26% 10%;
+    --foreground: 190 16% 93%;
+
+    --card: 197 24% 13%;
+    --card-foreground: 190 16% 93%;
+
+    --popover: 197 24% 13%;
+    --popover-foreground: 190 16% 93%;
+
+    --primary: 173 65% 44%;
+    --primary-foreground: 197 30% 8%;
+    --primary-glow: 173 75% 55%;
+    --primary-soft: 173 40% 19%;
+
+    --secondary: 197 20% 19%;
+    --secondary-foreground: 190 16% 93%;
+
+    --muted: 197 20% 19%;
+    --muted-foreground: 193 12% 64%;
+
+    --accent: 173 38% 22%;
+    --accent-foreground: 173 65% 74%;
+
+    --destructive: 0 66% 52%;
     --destructive-foreground: 0 0% 100%;
-    --success: 145 60% 50%;
+
+    --success: 152 52% 46%;
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 55%;
-    --warning-foreground: 0 0% 0%;
-    --income: 145 60% 50%;
-    --expense: 0 70% 60%;
-    --bills: 25 90% 60%;
-    --savings: 210 80% 60%;
-    --debt: 280 60% 65%;
-    --border: 200 20% 22%;
-    --input: 200 20% 22%;
-    --ring: 173 70% 45%;
+    --warning: 33 90% 55%;
+    --warning-foreground: 0 0% 8%;
+
+    --household: 210 75% 62%;
+    --personal: 280 60% 70%;
+
+    --income: 152 52% 46%;
+    --expense: 4 70% 60%;
+    --bills: 27 88% 58%;
+    --savings: 211 76% 60%;
+    --debt: 275 55% 66%;
+
+    --border: 197 18% 22%;
+    --input: 197 18% 24%;
+    --ring: 173 65% 44%;
 
     /* Shadows read as nothing on a dark ground, so the hairline carries the
        edge there instead. */
     --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
-    --shadow-card: 0 1px 2px 0 hsl(0 0% 0% / 0.35), 0 4px 16px -6px hsl(0 0% 0% / 0.5);
-    --shadow-raised: 0 2px 6px 0 hsl(0 0% 0% / 0.4), 0 14px 32px -10px hsl(0 0% 0% / 0.6);
-    --hairline: 200 18% 20%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --shadow-card: 0 1px 2px 0 hsl(0 0% 0% / 0.35), 0 6px 20px -12px hsl(0 0% 0% / 0.55);
+    --shadow-raised: 0 2px 6px 0 hsl(0 0% 0% / 0.4), 0 16px 34px -14px hsl(0 0% 0% / 0.6);
+    --shadow-panel: 0 2px 6px 0 hsl(0 0% 0% / 0.45), 0 24px 48px -28px hsl(0 0% 0% / 0.7);
+    --hairline: 197 16% 21%;
+
+    --hero-from: 176 52% 22%;
+    --hero-to: 172 45% 33%;
+    --hero-foreground: 0 0% 100%;
+
+    --sidebar-background: 197 24% 13%;
+    --sidebar-foreground: 193 12% 66%;
+    --sidebar-primary: 173 65% 44%;
+    --sidebar-primary-foreground: 197 30% 8%;
+    --sidebar-accent: 197 20% 19%;
+    --sidebar-accent-foreground: 190 16% 93%;
+    --sidebar-border: 197 16% 21%;
+    --sidebar-ring: 173 65% 44%;
   }
 }
 
@@ -127,21 +167,79 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    background-color: hsl(var(--ground));
+  }
+
   body {
-    @apply bg-background text-foreground antialiased;
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    @apply bg-ground text-foreground antialiased;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+      "Segoe UI", system-ui, sans-serif;
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior-y: none;
-    /* 14px is a web default; this app is read at arm's length on a desktop and
-       carries a lot of small numerals, so it wants a touch more. */
-    font-size: 15px;
-    line-height: 1.55;
+    /* Read at arm's length on a desktop, and full of small numerals: 14px (the
+       web default) and the 15px this used to run at were both too tight. */
+    font-size: 16px;
+    line-height: 1.5;
+    /* Straight-sided numerals that line up column to column. */
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: "cv05" 1, "ss01" 1;
   }
+
+  /* Money is read in columns, so every figure gets the same advance width. */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
   .discreet-blur {
     filter: blur(6px);
     transition: filter 0.2s;
   }
-  .discreet-blur:hover, .discreet-blur:active {
+  .discreet-blur:hover,
+  .discreet-blur:active {
     filter: blur(0);
+  }
+
+  /* One scrollbar treatment, so panels do not each get the OS default slab. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.5);
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* The dashboard's filled card. A class rather than Tailwind gradient
+     utilities so the dark theme can restate both stops in one place. */
+  .hero-surface {
+    background-image: linear-gradient(135deg, hsl(var(--hero-from)), hsl(var(--hero-to)));
+    color: hsl(var(--hero-foreground));
+  }
+
+  /* The uppercase group label above a run of nav items or fields. */
+  .eyebrow {
+    @apply text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground;
+  }
+
+  /* The shell has referenced these since it was written, but they were never
+     defined, so the header and the tab bar ran under the notch on a phone. */
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 }

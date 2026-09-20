@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { Vault, emptyDocument } from "@/lib/vault/vault";
 import { memoryIO, type OsCrypto, type VaultIO } from "@/lib/vault/io";
-import { WrongPassphraseError } from "@/lib/vault/crypto";
+import { VaultKeyMissingError, WrongPassphraseError } from "@/lib/vault/crypto";
 
 /** Stands in for Electron's safeStorage. Reversible and obviously not real. */
 function fakeOs(available = true): OsCrypto {
@@ -44,6 +44,36 @@ describe("Vault.open", () => {
     await b.open();
     expect(b.doc.transactions).toHaveLength(1);
     expect(b.doc.transactions[0].payee).toBe("REWE");
+  });
+
+  /**
+   * The data-loss scenario, pinned.
+   *
+   * If the keyring cannot be read but a vault file is still on disk, the old
+   * code treated it as a first run: it minted a new key, seeded the starter
+   * categories and persisted — writing an empty document over data that the
+   * new key could never decrypt. Opening must fail loudly instead, leaving
+   * every byte where it is.
+   */
+  it("refuses to start fresh when a vault exists but its keyring does not", async () => {
+    const a = new Vault({ io, os: fakeOs(), debounceMs: 0 });
+    await a.open();
+    a.doc.transactions.push({
+      id: "t1", date: "2026-04-03", amount: 42.5, categoryId: "c", profile: "household",
+      payee: "IRREPLACEABLE", description: "", isVague: false,
+    });
+    a.scheduleSave();
+    await a.flush();
+    const before = JSON.stringify(await io.readVault());
+
+    // The keyring goes missing — a failed read looks exactly like this.
+    await io.writeKeyring(null as never);
+
+    const b = new Vault({ io, os: fakeOs(), debounceMs: 0 });
+    await expect(b.open()).rejects.toBeInstanceOf(VaultKeyMissingError);
+
+    // And, crucially, the encrypted data is untouched.
+    expect(JSON.stringify(await io.readVault())).toBe(before);
   });
 
   it("never writes the plaintext to the backing store", async () => {

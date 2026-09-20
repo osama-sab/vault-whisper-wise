@@ -94,10 +94,40 @@ export interface Rule {
   priority: number;
 }
 
+/** The panels the dashboard can show, in the order they are laid out. */
+export const DASHBOARD_PANELS = [
+  "summary", "trend", "categories", "top", "overbudget", "budgets",
+] as const;
+export type DashboardPanel = (typeof DASHBOARD_PANELS)[number];
+
+/** How far back the cashflow chart looks. */
+export type TrendRange = "1m" | "3m" | "12m";
+
 export interface AppSettings {
   id: "settings";
   discreetMode: boolean;
   activeProfile: ProfileFilter;
   paydays: number[]; // days of month
   currency: string;
+  /**
+   * Which dashboard panels are shown. Optional: settings written before the
+   * dashboard was customisable have no such field, and every reader falls
+   * back to DEFAULT_PANELS rather than showing an empty page.
+   */
+  dashboardPanels?: DashboardPanel[];
+  /** Remembered range for the cashflow chart. */
+  trendRange?: TrendRange;
+}
+
+/** Everything on, which is what a dashboard should be before it is tuned. */
+export const DEFAULT_PANELS: DashboardPanel[] = [
+  "summary", "trend", "categories", "top", "overbudget", "budgets",
+];
+
+export function panelsOf(settings: AppSettings): DashboardPanel[] {
+  const chosen = settings.dashboardPanels;
+  if (!chosen || chosen.length === 0) return DEFAULT_PANELS;
+  // Ordered by the canonical list, so toggling one off and on again does not
+  // move it to the bottom of the page.
+  return DASHBOARD_PANELS.filter((p) => chosen.includes(p));
 }

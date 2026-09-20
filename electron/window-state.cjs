@@ -10,8 +10,14 @@
 
 const MIN_WIDTH = 900;
 const MIN_HEIGHT = 600;
-const DEFAULT_WIDTH = 1280;
-const DEFAULT_HEIGHT = 860;
+/**
+ * Sized to the layout rather than picked round: the nav rail is 236px, the
+ * content column is capped at 1080px, and the gutters either side come to
+ * about 60px. 1380 shows the content at its full measure with nothing
+ * stretched; anything wider only adds empty ground beside it.
+ */
+const DEFAULT_WIDTH = 1380;
+const DEFAULT_HEIGHT = 880;
 
 /** How much of the window must remain on screen to stay grabbable. */
 const VISIBLE_MARGIN = 80;

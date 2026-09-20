@@ -1,183 +1,269 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { LayoutDashboard, Receipt, Calendar, Upload, Settings as SettingsIcon, Eye, EyeOff, Sun, Moon } from "lucide-react";
+import {
+  LayoutDashboard, Receipt, CalendarDays, Upload, Settings as SettingsIcon,
+  Eye, EyeOff, Sun, Moon, ShieldCheck, type LucideIcon,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { BrandMark } from "@/components/BrandMark";
+import { IconButton, Segmented } from "@/components/ui/surface";
 import type { ProfileFilter } from "@/lib/types";
 
-const tabs = [
-  { to: "/", label: "Home", icon: LayoutDashboard, end: true },
-  { to: "/transactions", label: "Transactions", icon: Receipt },
-  { to: "/bills", label: "Bills", icon: Calendar },
-  { to: "/import", label: "Import", icon: Upload },
-  { to: "/settings", label: "Settings", icon: SettingsIcon },
+type Tab = {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  end?: boolean;
+};
+
+/**
+ * The nav in groups rather than one undifferentiated run of five.
+ *
+ * Five items in a flat list give no sense of where the app's weight is;
+ * grouping says "this is the money, this is the plumbing" before the labels
+ * are even read.
+ */
+const GROUPS: { label: string; tabs: Tab[] }[] = [
+  {
+    label: "Overview",
+    tabs: [
+      { to: "/", label: "Home", icon: LayoutDashboard, end: true },
+    ],
+  },
+  {
+    label: "Money",
+    tabs: [
+      { to: "/transactions", label: "Transactions", icon: Receipt },
+      { to: "/bills", label: "Bills", icon: CalendarDays },
+      { to: "/import", label: "Import", icon: Upload },
+    ],
+  },
+  {
+    label: "General",
+    tabs: [
+      { to: "/settings", label: "Settings", icon: SettingsIcon },
+    ],
+  },
 ];
 
-const profiles: { value: ProfileFilter; label: string }[] = [
-  { value: "household", label: "Household" },
-  { value: "personal", label: "Personal" },
-  { value: "combined", label: "Combined" },
+const TABS = GROUPS.flatMap((g) => g.tabs);
+
+/**
+ * The switch takes the colour of the profile it is switched to.
+ *
+ * Household is blue and Personal violet everywhere else in the app — on
+ * category rows, in dropdown groups, on import rows — so the control that
+ * chooses between them says which world you are in without being read.
+ * Combined is the app's own primary, because it is not one of the two.
+ *
+ * The foreground flips by theme: the dark steps of these hues are light, so
+ * white text on them would not hold up.
+ */
+const PROFILES: { value: ProfileFilter; label: string; activeClass: string }[] = [
+  { value: "household", label: "Household", activeClass: "bg-household text-white dark:text-background shadow-sm" },
+  { value: "personal", label: "Personal", activeClass: "bg-personal text-white dark:text-background shadow-sm" },
+  { value: "combined", label: "Combined", activeClass: "bg-primary text-primary-foreground shadow-sm" },
 ];
 
-// Pages where the profile toggle bar should be hidden
-const hideProfileBarPaths = ["/settings", "/import"];
+/** Pages where the profile switch does nothing, so it should not be offered. */
+const HIDE_PROFILE_ON = ["/settings", "/import"];
 
 /**
  * Two layouts from one tree.
  *
  * Below `lg` the app keeps its phone shape: header on top, tab bar pinned to
- * the bottom. From `lg` up it becomes a desktop window — a vertical nav rail
- * down the side, which is what the horizontal space was being wasted on.
- * Everything is driven by CSS breakpoints rather than a JS width listener, so
- * there is no resize handler to get wrong and no flash of the wrong layout.
+ * the bottom. From `lg` up it is a desktop window — a white rail and a white
+ * header panel floating on the tinted ground, which is the shape the app is
+ * actually used in. Everything is driven by CSS breakpoints rather than a JS
+ * width listener, so there is no resize handler to get wrong.
+ *
+ * The content column is capped at `max-w-shell`. Before, rows ran the full
+ * width of the window: on a wide display a subscription's name sat half a
+ * screen away from its amount and the eye could not carry the line.
  */
 export default function AppShell() {
-  const { settings, setActiveProfile, toggleDiscreet } = useApp();
+  const { settings, setActiveProfile, toggleDiscreet, subscriptions } = useApp();
   const location = useLocation();
-  const showProfileBar = !hideProfileBarPaths.some((p) => location.pathname.startsWith(p));
+
+  const showProfile = !HIDE_PROFILE_ON.some((p) => location.pathname.startsWith(p));
 
   const { resolvedTheme, setTheme } = useTheme();
   // The resolved theme is unknown until after mount, so the icon would
   // otherwise flip on the first paint.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const isDark = resolvedTheme === "dark";
+  const isDark = mounted && resolvedTheme === "dark";
 
-  const iconButton = "p-2 rounded-full transition-colors bg-secondary text-secondary-foreground hover:bg-accent";
+  /** A live count beside Bills, so the rail carries information, not just links. */
+  const activeSubs = useMemo(
+    () => subscriptions.filter(
+      (s) => s.active && (settings.activeProfile === "combined" || s.profile === settings.activeProfile)
+    ).length,
+    [subscriptions, settings.activeProfile]
+  );
+  const badgeFor = (to: string) => (to === "/bills" && activeSubs > 0 ? activeSubs : null);
 
   const themeButton = (
-    <button
+    <IconButton
       onClick={() => setTheme(isDark ? "light" : "dark")}
       aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
       title={isDark ? "Light mode" : "Dark mode"}
-      className={iconButton}
     >
-      {mounted && isDark ? <Sun size={18} /> : <Moon size={18} />}
-    </button>
+      {isDark ? <Sun size={17} /> : <Moon size={17} />}
+    </IconButton>
   );
 
   const discreetButton = (
-    <button
+    <IconButton
       onClick={toggleDiscreet}
+      active={settings.discreetMode}
       aria-label="Toggle discreet mode"
       title={settings.discreetMode ? "Show amounts" : "Hide amounts"}
-      className={cn(
-        "p-2 rounded-full transition-colors",
-        settings.discreetMode
-          ? "bg-primary text-primary-foreground"
-          : "bg-secondary text-secondary-foreground hover:bg-accent"
-      )}
     >
-      {settings.discreetMode ? <EyeOff size={18} /> : <Eye size={18} />}
-    </button>
-  );
-
-  const profileBar = (
-    <div className="flex gap-1.5" role="group" aria-label="Profile">
-      {profiles.map((p) => (
-        <button
-          key={p.value}
-          onClick={() => setActiveProfile(p.value)}
-          aria-pressed={settings.activeProfile === p.value}
-          className={cn(
-            "flex-1 lg:flex-none lg:px-4 px-3 py-1.5 text-xs font-medium rounded-full transition-colors whitespace-nowrap",
-            settings.activeProfile === p.value
-              ? "bg-primary text-primary-foreground"
-              : "bg-secondary text-secondary-foreground hover:bg-accent"
-          )}
-        >
-          {p.label}
-        </button>
-      ))}
-    </div>
+      {settings.discreetMode ? <EyeOff size={17} /> : <Eye size={17} />}
+    </IconButton>
   );
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen bg-ground lg:flex lg:gap-3 lg:p-3">
       {/* ── Desktop rail ─────────────────────────────── */}
-      <aside className="hidden lg:flex lg:flex-col w-56 xl:w-60 flex-shrink-0 border-r border-border bg-card/40 sticky top-0 h-screen">
-        <div className="flex items-center gap-2 px-4 h-16 flex-shrink-0">
-          <img src="./pwa-192.png" alt="" className="w-7 h-7" />
-          <h1 className="text-base font-semibold tracking-tight text-primary truncate">Pocket Money</h1>
+      <aside className="hidden lg:flex lg:flex-col w-[236px] xl:w-[252px] flex-shrink-0 rounded-panel bg-card border border-hairline shadow-card sticky top-3 h-[calc(100vh-1.5rem)]">
+        <div className="px-4 pt-4 pb-3 flex items-center gap-2.5 min-w-0">
+          <BrandMark size={34} className="flex-shrink-0" />
+          <span className="min-w-0 leading-tight">
+            <span className="block text-[15px] font-semibold tracking-tight truncate">Pocket Money</span>
+            <span className="block text-[10px] text-muted-foreground truncate">Offline budget tracker</span>
+          </span>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
-          {tabs.map((t) => (
-            <NavLink
-              key={t.to}
-              to={t.to}
-              end={t.end}
-              className={({ isActive }) =>
-                cn(
-                  // The accent bar is what marks the current section; the tint
-                  // behind it is secondary. A tint alone reads as a hover.
-                  "relative flex items-center gap-3 rounded-xl pl-4 pr-3 py-2.5 text-sm font-medium transition-colors",
-                  "before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:w-1 before:rounded-full before:transition-all",
-                  isActive
-                    ? "bg-primary/10 text-primary before:h-5 before:bg-primary"
-                    : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground before:h-0"
-                )
-              }
-            >
-              <t.icon size={18} className="flex-shrink-0" />
-              <span className="truncate">{t.label}</span>
-            </NavLink>
+        <nav className="flex-1 px-3 pb-2 overflow-y-auto space-y-4">
+          {GROUPS.map((group) => (
+            <div key={group.label}>
+              <p className="eyebrow px-2.5 mb-1.5">{group.label}</p>
+              <div className="space-y-0.5">
+                {group.tabs.map((t) => {
+                  const badge = badgeFor(t.to);
+                  return (
+                    <NavLink
+                      key={t.to}
+                      to={t.to}
+                      end={t.end}
+                      className={({ isActive }) =>
+                        cn(
+                          // The current section is a solid pill, not a tint:
+                          // a tint on its own reads as a hover state.
+                          "flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-[13.5px] font-medium transition-colors",
+                          isActive
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        )
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          <t.icon size={17} className="flex-shrink-0" strokeWidth={2} />
+                          <span className="truncate flex-1">{t.label}</span>
+                          {badge != null && (
+                            <span
+                              className={cn(
+                                "text-[10px] font-semibold tabular-nums rounded-full px-1.5 py-0.5 flex-shrink-0",
+                                isActive ? "bg-primary-foreground/20" : "bg-secondary text-muted-foreground"
+                              )}
+                            >
+                              {badge}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            </div>
           ))}
         </nav>
 
-        <div className="flex items-center gap-1.5 px-3 py-3 border-t border-border flex-shrink-0">
-          {themeButton}
-          {discreetButton}
+        {/* The app's whole premise, stated where a template would put an upsell. */}
+        <div className="px-3 pb-3 space-y-2">
+          <div className="rounded-xl bg-primary-soft/70 px-3 py-2.5">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold text-accent-foreground">
+              <ShieldCheck size={13} /> Local &amp; encrypted
+            </p>
+            <p className="text-[10.5px] text-muted-foreground mt-0.5 leading-snug">
+              Nothing leaves this computer. Your vault is encrypted on disk.
+            </p>
+          </div>
+          <div className="flex items-center gap-1 pt-1 border-t border-hairline">
+            {themeButton}
+            {discreetButton}
+            <span className="text-[10.5px] text-muted-foreground ml-1 truncate">
+              {settings.discreetMode ? "Amounts hidden" : "Amounts shown"}
+            </span>
+          </div>
         </div>
       </aside>
 
       {/* ── Main column ──────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-30 bg-card/90 backdrop-blur border-b border-border safe-top">
-          {/* Narrow: brand + actions. Wide: the rail already has both. */}
-          <div className="lg:hidden px-4 py-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 min-w-0">
-              <img src="./pwa-192.png" alt="" className="w-7 h-7 flex-shrink-0" />
-              <h1 className="text-lg font-semibold tracking-tight text-primary truncate">Pocket Money</h1>
+        {/* Below lg there is no rail, so the brand and the two toggles need a
+            home. From lg up the rail carries both and this is not rendered —
+            a bar restating the page name is something the nav already says. */}
+        <header className="lg:hidden sticky top-0 z-30 bg-card/90 backdrop-blur-md border-b border-hairline safe-top">
+          <div className="px-4 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <BrandMark size={30} className="flex-shrink-0" />
+              <span className="text-[15px] font-semibold tracking-tight truncate">Pocket Money</span>
             </div>
-            <div className="flex items-center gap-1.5 flex-shrink-0">
+            <div className="flex items-center gap-1 flex-shrink-0">
               {themeButton}
               {discreetButton}
             </div>
           </div>
-
-          {showProfileBar && (
-            <div className="px-4 pb-3 lg:py-3.5 lg:pb-3.5">
-              <div className="mx-auto w-full max-w-[1180px]">{profileBar}</div>
-            </div>
-          )}
         </header>
 
-        {/* pb-28 clears the fixed tab bar, which only exists below lg. */}
-        <main className="flex-1 w-full px-4 lg:px-8 pt-4 pb-28 lg:pb-10">
-          <div className="mx-auto w-full max-w-[1180px]">
-            <Outlet />
+        {/* pb-24 clears the fixed tab bar, which only exists below lg. */}
+        <main className="flex-1 w-full px-4 lg:px-6 pt-4 lg:pt-5 pb-24 lg:pb-6">
+          <div className="mx-auto w-full max-w-shell">
+            {/* The one control that changes what every page below it means,
+                centred and on its own line rather than tucked into a corner. */}
+            {showProfile && (
+              <div className="flex justify-center mb-4 lg:mb-5">
+                <Segmented
+                  ariaLabel="Profile"
+                  options={PROFILES}
+                  value={settings.activeProfile}
+                  onChange={setActiveProfile}
+                  size="lg"
+                  className="max-w-full overflow-x-auto"
+                />
+              </div>
+            )}
+
+            <div key={location.pathname} className="animate-rise">
+              <Outlet />
+            </div>
           </div>
         </main>
       </div>
 
       {/* ── Narrow-screen tab bar ────────────────────── */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-card/95 backdrop-blur border-t border-border safe-bottom">
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-card/95 backdrop-blur border-t border-hairline safe-bottom">
         <div className="max-w-2xl mx-auto grid grid-cols-5">
-          {tabs.map((t) => (
+          {TABS.map((t) => (
             <NavLink
               key={t.to}
               to={t.to}
               end={t.end}
               className={({ isActive }) =>
                 cn(
-                  "flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium",
+                  "flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors",
                   isActive ? "text-primary" : "text-muted-foreground"
                 )
               }
             >
-              <t.icon size={20} />
+              <t.icon size={19} />
               <span>{t.label}</span>
             </NavLink>
           ))}

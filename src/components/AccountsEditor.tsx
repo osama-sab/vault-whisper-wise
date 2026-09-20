@@ -69,7 +69,7 @@ export default function AccountsEditor() {
           No accounts yet. Add one to start tracking balances.
         </p>
       ) : (
-        <div className="bg-card rounded-2xl border border-hairline shadow-card divide-y divide-hairline">
+        <div className="bg-card rounded-card border border-hairline shadow-card divide-y divide-hairline">
           {[...accounts].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)).map((a) => {
             const balance = balances.get(a.id) ?? 0;
             const used = counts.get(a.id) ?? 0;
@@ -136,7 +136,7 @@ function AccountDialog({ account, onClose, onSave }: {
 
   return (
     <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-card border border-hairline rounded-2xl shadow-raised p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-card border border-hairline rounded-panel shadow-panel p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
         <p className="font-semibold">Account</p>
 
         <div>
@@ -241,7 +241,7 @@ function ReconcileDialog({ account, onClose }: { account: Account; onClose: () =
 
   return (
     <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-card border border-hairline rounded-2xl shadow-raised p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-card border border-hairline rounded-panel shadow-panel p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
           <Scale size={16} className="text-primary" />
           <p className="font-semibold">Check {account.name} against your bank</p>

@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
 import { useApp } from "@/lib/store";
 import { formatMoney, formatDate, isInMonth, monthKey, profileLabel } from "@/lib/format";
-import { Plus, Pencil, Trash2, Search, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, X, FileDown, Receipt, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import TransactionDialog from "@/components/TransactionDialog";
-import { MerchantLogo, CategoryIcon } from "@/components/MerchantLogo";
+import { MerchantLogo, CategoryIcon, CategoryGlyph } from "@/components/MerchantLogo";
 import type { Transaction } from "@/lib/types";
 import { DiscreetText } from "@/components/Discreet";
 import { exportTransactionsCSV, downloadFile } from "@/lib/csv";
+import { Card, MonthStepper, IconButton, EmptyState, FieldLabel } from "@/components/ui/surface";
+import { cn } from "@/lib/utils";
 
 export default function TransactionsPage() {
   const { transactions, categories, settings, deleteTransaction, deleteSplitGroup } = useApp();
@@ -61,7 +63,7 @@ export default function TransactionsPage() {
     return [...m.entries()];
   }, [list]);
 
-  /** Months that actually contain data, for the "all time" jump list. */
+  /** Whether anything exists outside the current scope, for the "all time" hint. */
   const hasAnyOutsideMonth = transactions.length > list.length;
 
   function exportCSV() {
@@ -84,133 +86,166 @@ export default function TransactionsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center gap-2">
-        <h2 className="font-semibold">Transactions</h2>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={exportCSV} disabled={list.length === 0}>CSV</Button>
-          <Button size="sm" onClick={() => { setEditing(null); setOpen(true); }}>
-            <Plus size={16} className="mr-1" /> Add
+      {/* Scope left, actions right. Clicking the month's name switches between
+          this month and all time, which used to be a full-width button. */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <MonthStepper
+          month={month}
+          onChange={setMonth}
+          label={month ? undefined : "All time"}
+          onLabelClick={() =>
+            setMonth(month ? null : new Date(new Date().getFullYear(), new Date().getMonth(), 1))
+          }
+        />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="rounded-full" onClick={exportCSV} disabled={list.length === 0}>
+            <FileDown size={15} className="mr-1.5" /> CSV
+          </Button>
+          <Button size="sm" className="rounded-full" onClick={() => { setEditing(null); setOpen(true); }}>
+            <Plus size={15} className="mr-1" /> Add
           </Button>
         </div>
       </div>
 
-      {/* Month scope */}
-      <div className="flex items-center gap-2">
-        <button
-          className="p-2 rounded-full bg-secondary disabled:opacity-40"
-          aria-label="Previous month"
-          disabled={!month}
-          onClick={() => month && setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
-        >
-          <ChevronLeft size={15} />
-        </button>
-        <button
-          className="flex-1 text-sm font-medium py-1.5 rounded-lg bg-secondary hover:bg-accent transition-colors"
-          onClick={() => setMonth(month ? null : new Date(new Date().getFullYear(), new Date().getMonth(), 1))}
-        >
-          {month ? month.toLocaleDateString(undefined, { month: "long", year: "numeric" }) : "All time"}
-          <span className="text-muted-foreground font-normal"> · {list.length}</span>
-        </button>
-        <button
-          className="p-2 rounded-full bg-secondary disabled:opacity-40"
-          aria-label="Next month"
-          disabled={!month}
-          onClick={() => month && setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
-        >
-          <ChevronRight size={15} />
-        </button>
-      </div>
-
-      <div className="relative">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-        <Input
-          className="pl-9 pr-9"
-          placeholder="Search payee, description or category"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        {query && (
-          <button
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            aria-label="Clear search"
-            onClick={() => setQuery("")}
-          >
-            <X size={14} />
-          </button>
-        )}
-      </div>
-
-      {list.length > 0 && (
-        <div className="flex gap-3 text-xs text-muted-foreground px-1">
-          <span>In <span className="font-medium text-income tabular-nums">{formatMoney(monthTotal.inflow, settings.currency)}</span></span>
-          <span>Out <span className="font-medium text-expense tabular-nums">{formatMoney(monthTotal.outflow, settings.currency)}</span></span>
-        </div>
-      )}
-
-      {grouped.length === 0 ? (
-        <div className="py-12 text-center space-y-2">
-          <p className="text-sm text-muted-foreground">
-            {query ? `Nothing matches "${query}".`
-              : month ? `No transactions in ${month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}.`
-              : "No transactions yet. Tap Add to create one, or import a CSV."}
-          </p>
-          {month && hasAnyOutsideMonth && !query && (
-            <button className="text-xs text-primary font-medium" onClick={() => setMonth(null)}>
-              Show all time instead
+      {/* Search and the two totals on one line: the totals describe exactly
+          what the search has narrowed to. */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative flex-1 min-w-0">
+          <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+          <Input
+            className="pl-10 pr-10 h-10 rounded-full bg-card border-hairline"
+            placeholder="Search payee, description or category"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button
+              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+              onClick={() => setQuery("")}
+            >
+              <X size={15} />
             </button>
           )}
         </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <TotalPill icon={ArrowDownLeft} label="In" value={monthTotal.inflow} currency={settings.currency} tone="income" />
+          <TotalPill icon={ArrowUpRight} label="Out" value={monthTotal.outflow} currency={settings.currency} tone="expense" />
+        </div>
+      </div>
+
+      {grouped.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={Receipt}
+            title={
+              query ? `Nothing matches “${query}”`
+                : month ? `No transactions in ${month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}`
+                : "No transactions yet"
+            }
+            action={
+              month && hasAnyOutsideMonth && !query ? (
+                <Button variant="outline" size="sm" className="rounded-full" onClick={() => setMonth(null)}>
+                  Show all time instead
+                </Button>
+              ) : !month || !hasAnyOutsideMonth ? (
+                <Button size="sm" className="rounded-full" onClick={() => { setEditing(null); setOpen(true); }}>
+                  <Plus size={15} className="mr-1" /> Add a transaction
+                </Button>
+              ) : undefined
+            }
+          >
+            {!query && !hasAnyOutsideMonth && "Add one by hand, or import a bank statement from the Import page."}
+          </EmptyState>
+        </Card>
       ) : (
         <div className="space-y-4">
-          {grouped.map(([date, items]) => (
-            <div key={date}>
-              <p className="text-xs text-muted-foreground mb-1.5 px-1">
-                {formatDate(date, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
-              </p>
-              <div className="bg-card rounded-2xl border border-hairline shadow-card divide-y divide-hairline">
-                {items.map((t) => {
-                  const c = catMap.get(t.categoryId);
-                  const hide = settings.discreetMode || t.isVague;
-                  const display = hide
-                    ? t.displayDescription || c?.genericLabel || c?.name
-                    : t.payee || t.description || c?.name;
-                  const isIncome = c?.type === "income";
-                  return (
-                    <div key={t.id} className="group flex items-center gap-3 px-4 py-3">
-                      {/* A hidden row has no merchant to show, and a "?" tile
-                          is worse than nothing — use its category instead. */}
-                      {hide
-                        ? <CategoryIcon type={c?.type ?? "expenses"} size="md" />
-                        : <MerchantLogo payee={t.payee || c?.name || ""} size={36} />}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">
-                          <DiscreetText fallback={c?.genericLabel || c?.name}>{display}</DiscreetText>
-                          {t.splitGroupId && <span className="ml-2 text-[10px] text-muted-foreground">SPLIT</span>}
+          {grouped.map(([date, items]) => {
+            const dayTotal = items.reduce((sum, t) => {
+              const c = catMap.get(t.categoryId);
+              return sum + (c?.type === "income" ? Math.abs(t.amount) : -Math.abs(t.amount));
+            }, 0);
+            return (
+              <div key={date}>
+                {/* The day's own header, with its net — a date alone said less
+                    than the space it took. */}
+                <div className="flex items-baseline justify-between gap-3 px-1 mb-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {formatDate(date, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                  </p>
+                  <p className={cn("text-xs font-semibold tabular-nums", dayTotal >= 0 ? "text-income" : "text-muted-foreground")}>
+                    <DiscreetText fallback="••">
+                      {dayTotal >= 0 ? "+" : "−"}{formatMoney(Math.abs(dayTotal), settings.currency)}
+                    </DiscreetText>
+                  </p>
+                </div>
+
+                <Card flush className="divide-y divide-hairline overflow-hidden">
+                  {items.map((t) => {
+                    const c = catMap.get(t.categoryId);
+                    const hide = settings.discreetMode || t.isVague;
+                    const display = hide
+                      ? t.displayDescription || c?.genericLabel || c?.name
+                      : t.payee || t.description || c?.name;
+                    const isIncome = c?.type === "income";
+                    return (
+                      <div key={t.id} className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-secondary/40">
+                        {/* A hidden row has no merchant to show, and a "?" tile
+                            is worse than nothing — use its category instead. */}
+                        {hide
+                          ? <CategoryIcon type={c?.type ?? "expenses"} size="md" />
+                          : <MerchantLogo payee={t.payee || c?.name || ""} size={38} />}
+
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-[14px] truncate leading-tight">
+                            <DiscreetText fallback={c?.genericLabel || c?.name}>{display}</DiscreetText>
+                            {t.splitGroupId && (
+                              <span className="ml-2 align-middle text-[9.5px] font-semibold tracking-wide uppercase text-muted-foreground bg-secondary rounded px-1.5 py-0.5">
+                                Split
+                              </span>
+                            )}
+                          </p>
+                          {/* Below lg this line carries the category; from lg
+                              up the category moves into its own column. */}
+                          <p className="text-[11.5px] text-muted-foreground truncate mt-0.5 lg:hidden">
+                            {c?.name} · {profileLabel(t.profile)}
+                          </p>
+                          <p className="text-[11.5px] text-muted-foreground truncate mt-0.5 hidden lg:block">
+                            {profileLabel(t.profile)}
+                          </p>
+                        </div>
+
+                        <div className="hidden lg:flex items-center gap-2 w-[11rem] flex-shrink-0 min-w-0">
+                          <CategoryGlyph type={c?.type ?? "expenses"} size={14} />
+                          <span className="text-[12.5px] text-muted-foreground truncate">{c?.name}</span>
+                        </div>
+
+                        {/* Amount and actions sit on one line: stacking the
+                            icons under the figure squeezed them and broke the
+                            row's baseline. The actions keep their space
+                            reserved, so nothing shifts on hover. */}
+                        <p className={cn(
+                          "font-semibold tabular-nums text-[14px] text-right flex-shrink-0 w-[7.5rem]",
+                          isIncome ? "text-income" : "text-foreground"
+                        )}>
+                          <DiscreetText fallback="••">
+                            {isIncome ? "+" : "−"}
+                            {formatMoney(Math.abs(t.amount), settings.currency)}
+                          </DiscreetText>
                         </p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {c?.name} · {profileLabel(t.profile)}
-                        </p>
-                      </div>
-                      {/* Amount and actions sit on one line: stacking the icons
-                          under the figure squeezed them and broke the row's
-                          baseline. They stay reserved space, so nothing shifts
-                          when they appear on hover. */}
-                      <p className={"font-semibold tabular-nums text-right " + (isIncome ? "text-income" : "text-foreground")}>
-                        <DiscreetText fallback="••">
-                          {isIncome ? "+" : "−"}
-                          {formatMoney(Math.abs(t.amount), settings.currency)}
-                        </DiscreetText>
-                      </p>
-                      <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                          <button
-                            className="p-1.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground"
+
+                        <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                          <IconButton
+                            className="w-8 h-8"
                             aria-label="Edit transaction"
                             onClick={() => { setEditing(t); setOpen(true); }}
                           >
-                            <Pencil size={15} />
-                          </button>
-                          <button
-                            className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            <Pencil size={14} />
+                          </IconButton>
+                          <IconButton
+                            className="w-8 h-8"
+                            tone="danger"
                             aria-label="Delete transaction"
                             onClick={() => {
                               if (t.splitGroupId) {
@@ -220,19 +255,48 @@ export default function TransactionsPage() {
                               }
                             }}
                           >
-                            <Trash2 size={15} />
-                          </button>
+                            <Trash2 size={14} />
+                          </IconButton>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </Card>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       <TransactionDialog open={open} onOpenChange={setOpen} editing={editing} />
+    </div>
+  );
+}
+
+/** In / Out for whatever the filters currently select. */
+function TotalPill({
+  icon: Icon, label, value, currency, tone,
+}: {
+  icon: typeof ArrowDownLeft;
+  label: string;
+  value: number;
+  currency: string;
+  tone: "income" | "expense";
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-full bg-card border border-hairline shadow-sm pl-1.5 pr-3.5 py-1.5">
+      <span className={cn(
+        "inline-flex items-center justify-center w-7 h-7 rounded-full",
+        tone === "income" ? "bg-income/10 text-income" : "bg-expense/10 text-expense"
+      )}>
+        <Icon size={14} />
+      </span>
+      <span className="min-w-0">
+        <FieldLabel className="leading-none">{label}</FieldLabel>
+        <span className="block text-[13px] font-semibold tabular-nums leading-tight mt-0.5">
+          <DiscreetText fallback="••">{formatMoney(value, currency)}</DiscreetText>
+        </span>
+      </span>
     </div>
   );
 }

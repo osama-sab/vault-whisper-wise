@@ -17,6 +17,8 @@ import { formatMoney, isValidCurrency, isoFromDate, profileLabel } from "@/lib/f
 import { toast } from "sonner";
 import SecurityPanel from "@/components/SecurityPanel";
 import AccountsEditor from "@/components/AccountsEditor";
+import CategoriesEditor from "@/components/CategoriesEditor";
+import { Card, CardHead, IconButton, Note } from "@/components/ui/surface";
 
 const TYPE_LABELS: Record<CategoryType, string> = {
   income: "Income",
@@ -41,13 +43,12 @@ export function Section({ icon: Icon, title, children }: {
   icon: LucideIcon; title: string; children: React.ReactNode;
 }) {
   return (
-    <div className="bg-card rounded-2xl border border-hairline shadow-card overflow-hidden">
-      <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
-        <Icon size={15} className="text-primary" />
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
+    <Card flush className="overflow-hidden">
+      <div className="px-4 pt-4 pb-3">
+        <CardHead icon={Icon} title={title} tight />
       </div>
       <div className="px-4 pb-4 space-y-4">{children}</div>
-    </div>
+    </Card>
   );
 }
 
@@ -181,7 +182,7 @@ export default function SettingsPage() {
         nothing. Below `md` it collapses to a scrollable row, since a sidebar
         plus content will not fit a narrow window.
       */}
-      <Tabs defaultValue="general" orientation="vertical" className="md:grid md:grid-cols-[13rem_minmax(0,1fr)] md:gap-6 md:items-start max-w-4xl">
+      <Tabs defaultValue="general" orientation="vertical" className="md:grid md:grid-cols-[14rem_minmax(0,1fr)] md:gap-6 md:items-start">
         <TabsList
           className="
             w-full flex justify-start overflow-x-auto
@@ -194,9 +195,9 @@ export default function SettingsPage() {
               key={s.id}
               value={s.id}
               className="
-                flex-shrink-0
-                md:w-full md:justify-start md:items-start md:gap-2.5 md:rounded-lg md:px-3 md:py-2.5 md:text-left
-                md:data-[state=active]:bg-primary/10 md:data-[state=active]:text-primary md:data-[state=active]:shadow-none
+                flex-shrink-0 rounded-full md:rounded-xl
+                md:w-full md:justify-start md:items-start md:gap-2.5 md:px-3 md:py-2.5 md:text-left
+                md:data-[state=active]:bg-primary md:data-[state=active]:text-primary-foreground md:data-[state=active]:shadow-sm
               "
             >
               <s.icon size={15} className="hidden md:block mt-0.5 flex-shrink-0" />
@@ -208,7 +209,7 @@ export default function SettingsPage() {
           ))}
         </TabsList>
 
-        <div className="min-w-0 pt-4 md:pt-0">
+        <div className="min-w-0 pt-4 md:pt-0 max-w-[46rem]">
         <TabsContent value="general" className="space-y-3 mt-0">
           <Section icon={Palette} title="Appearance">
             <Row label="Theme" hint="Follows Windows unless you pick one.">
@@ -314,154 +315,6 @@ export default function SettingsPage() {
   );
 }
 
-export function CategoriesEditor() {
-  const { categories, settings, upsertCategory, deleteCategory } = useApp();
-  const [editing, setEditing] = useState<Category | null>(null);
-
-  function newCat(profile: ProfileId, type: CategoryType) {
-    setEditing({ id: uid(), name: "", type, profileDefault: profile, monthlyBudget: 0, genericLabel: "" });
-  }
-
-  const profiles: { id: ProfileId; label: string }[] = [
-    { id: "household", label: "Household" },
-    { id: "personal", label: "Personal" },
-  ];
-
-  return (
-    <div className="space-y-5">
-      <p className="text-xs text-muted-foreground bg-card border border-hairline rounded-2xl shadow-raised p-3">
-        Categories are how you classify each transaction. Each category belongs to either Household or Personal.
-        When you add a transaction with a given Profile, only its categories show up.
-      </p>
-
-      {profiles.map((p) => (
-        <div key={p.id} className="space-y-3">
-          <h2 className="font-semibold text-sm uppercase tracking-wide text-muted-foreground px-1">{p.label}</h2>
-          {(["income", "bills", "expenses", "savings", "debt"] as CategoryType[]).map((t) => {
-            const items = categories.filter((c) => c.type === t && c.profileDefault === p.id);
-            return (
-              <div key={t} className="bg-card rounded-2xl border border-hairline shadow-card p-3">
-                <div className="flex justify-between items-center mb-1">
-                  <p className="font-medium text-sm flex items-center gap-1.5">
-                    <CategoryIcon type={t} size="sm" />
-                    {TYPE_LABELS[t]}
-                  </p>
-                  <Button size="sm" variant="ghost" onClick={() => newCat(p.id, t)}>
-                    <Plus size={14} />
-                  </Button>
-                </div>
-                {items.length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-1">No {TYPE_LABELS[t].toLowerCase()} categories yet.</p>
-                ) : (
-                  <div className="divide-y divide-border">
-                    {items.map((c) => (
-                      <div key={c.id} className="py-2 flex items-center justify-between gap-2">
-                        <button onClick={() => setEditing(c)} className="text-left flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{c.name}</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {c.monthlyBudget > 0 ? `Budget ${formatMoney(c.monthlyBudget, settings.currency)}` : "No budget"}
-                            {c.genericLabel ? ` · shown as "${c.genericLabel}"` : ""}
-                          </p>
-                        </button>
-                        <button
-                          onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteCategory(c.id); }}
-                          className="text-muted-foreground p-1"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ))}
-
-      {editing && (
-        <CategoryDialog
-          cat={editing}
-          onClose={() => setEditing(null)}
-          onSave={async (c) => { await upsertCategory(c); setEditing(null); }}
-        />
-      )}
-    </div>
-  );
-}
-
-function CategoryDialog({ cat, onClose, onSave }: { cat: Category; onClose: () => void; onSave: (c: Category) => void }) {
-  const [c, setC] = useState(cat);
-  const [error, setError] = useState("");
-
-  function save() {
-    if (!c.name.trim()) { setError("Please enter a name"); return; }
-    if (c.monthlyBudget < 0) { setError("Budget must be 0 or positive"); return; }
-    onSave({ ...c, name: c.name.trim(), monthlyBudget: c.monthlyBudget || 0 });
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-card border border-hairline rounded-2xl shadow-raised p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
-        <p className="font-semibold">Category</p>
-        <div>
-          <Label>Name</Label>
-          <Input value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} placeholder="e.g. Groceries" />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <Label>Type</Label>
-            <Select value={c.type} onValueChange={(v) => setC({ ...c, type: v as CategoryType })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="income">Income</SelectItem>
-                <SelectItem value="bills">Bills</SelectItem>
-                <SelectItem value="expenses">Expenses</SelectItem>
-                <SelectItem value="savings">Savings</SelectItem>
-                <SelectItem value="debt">Debt</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Profile</Label>
-            <Select value={c.profileDefault} onValueChange={(v) => setC({ ...c, profileDefault: v as ProfileId })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="household">Household</SelectItem>
-                <SelectItem value="personal">Personal</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <div>
-          <Label>Monthly budget (optional)</Label>
-          <Input
-            type="number"
-            min="0"
-            step="0.01"
-            value={c.monthlyBudget}
-            onChange={(e) => setC({ ...c, monthlyBudget: Math.max(0, parseFloat(e.target.value) || 0) })}
-            placeholder="0"
-          />
-        </div>
-        <div>
-          <Label>Generic label (used in discreet mode)</Label>
-          <Input
-            value={c.genericLabel}
-            onChange={(e) => setC({ ...c, genericLabel: e.target.value })}
-            placeholder="e.g. Food (instead of REWE)"
-          />
-        </div>
-        {error && <p className="text-sm text-destructive font-medium">{error}</p>}
-        <div className="flex gap-2 justify-end pt-2">
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={save}>Save</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function RulesEditor() {
   const { rules, categories, upsertRule, deleteRule } = useApp();
   const [test, setTest] = useState("");
@@ -480,7 +333,7 @@ export function RulesEditor() {
 
   return (
     <div className="space-y-3">
-      <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-2">
+      <div className="bg-card rounded-card border border-hairline shadow-card p-4 space-y-2">
         <div className="flex items-center gap-2">
           <Sparkles size={16} className="text-primary" />
           <p className="font-medium">What are auto-tag rules?</p>
@@ -494,7 +347,7 @@ export function RulesEditor() {
         </p>
       </div>
 
-      <div className="bg-card rounded-2xl border border-hairline shadow-card p-3 space-y-2">
+      <div className="bg-card rounded-card border border-hairline shadow-card p-3 space-y-2">
         <Label className="text-xs">Test against text</Label>
         <Input placeholder="e.g. REWE SAGT DANKE" value={test} onChange={(e) => setTest(e.target.value)} />
         {test && (
@@ -517,7 +370,7 @@ export function RulesEditor() {
         <Button size="sm" onClick={newRule}><Plus size={14} className="mr-1" /> New rule</Button>
       </div>
 
-      <div className="bg-card rounded-2xl border border-hairline shadow-card divide-y divide-hairline">
+      <div className="bg-card rounded-card border border-hairline shadow-card divide-y divide-hairline">
         {rules.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground text-center">
             No rules yet. They'll be created automatically when you import a CSV and choose to save categorizations.
@@ -547,7 +400,7 @@ export function RulesEditor() {
 
       {editing && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center p-4" onClick={() => setEditing(null)}>
-          <div className="bg-card border border-hairline rounded-2xl shadow-raised p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-card border border-hairline rounded-panel shadow-panel p-4 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
             <p className="font-semibold">Auto-tag rule</p>
             <div>
               <Label>Keyword</Label>
@@ -691,7 +544,7 @@ export function DataBackup() {
   }
 
   return (
-    <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-3">
+    <div className="bg-card rounded-card border border-hairline shadow-card p-4 space-y-3">
       <p className="font-medium">Plain JSON copy</p>
       <p className="text-xs text-muted-foreground">
         The same data as a readable JSON file, for moving it into another tool or inspecting it

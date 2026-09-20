@@ -236,14 +236,59 @@ export function findMerchant(payee: string): MerchantInfo | null {
   return null;
 }
 
-// ─── CATEGORY ICONS (used next to category type labels) ────────────────
-// Returns an SVG path for each CategoryType
-import type { CategoryType } from "./types";
+/* ─── Brand colour → a legible pair ──────────────────────────────────── */
 
-export const CATEGORY_ICONS: Record<CategoryType, { path: string; color: string }> = {
-  income:   { path: "M12 2v16m0-16l-5 5m5-5l5 5M5 22h14", color: "#10B981" },
-  bills:    { path: "M9 7h6m-6 4h6m-6 4h4M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z", color: "#8B5CF6" },
-  expenses: { path: "M3 3h18v4H3zm0 6h18v4H3zm0 6h18v4H3z", color: "#EF4444" },
-  savings:  { path: "M19 10c0-2.76-2.24-5-5-5-.55 0-1.09.1-1.58.27A4.98 4.98 0 008 3C5.24 3 3 5.24 3 8c0 .93.26 1.8.7 2.55C2.63 11.88 2 13.37 2 15c0 3.31 2.69 6 6 6 1.23 0 2.37-.38 3.32-1.02A5.96 5.96 0 0016 21c2.76 0 5-2.24 5-5 0-1.63-.63-3.12-1.7-4.45.44-.75.7-1.62.7-2.55z", color: "#0EA5E9" },
-  debt:     { path: "M12 1v2M12 21v2M4.22 4.22l1.42 1.42M16.95 16.95l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M16.95 7.05l1.42-1.42M12 6a6 6 0 100 12 6 6 0 000-12zm-1 4h2v4h-2z", color: "#F59E0B" },
-};
+export function hexToHsl(hex: string): [number, number, number] {
+  const c = hex.replace("#", "");
+  const r = parseInt(c.substring(0, 2), 16) / 255;
+  const g = parseInt(c.substring(2, 4), 16) / 255;
+  const b = parseInt(c.substring(4, 6), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l * 100];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h: number;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return [h * 360, s * 100, l * 100];
+}
+
+/** HSL (h 0-360, s/l 0-100) to 0-255 RGB, for anything that cannot take CSS. */
+export function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const S = s / 100;
+  const L = l / 100;
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = S * Math.min(L, 1 - L);
+  const f = (n: number) => L - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+
+/**
+ * A brand colour, forced into a band that reads.
+ *
+ * Raw brand hex as a solid fill is a wall of fully saturated squares, and the
+ * yellow brands (Edeka, Netto, DHL, Vattenfall) are illegible at any text
+ * colour. The hue is kept; the lightness is not. Greys and blacks (Zara, Nike,
+ * Notion) have no hue worth keeping, so they fall back to neutral.
+ */
+export function brandTones(hex: string) {
+  const [h, s] = hexToHsl(hex);
+  const grey = s < 12;
+  const sat = grey ? 0 : Math.max(38, Math.min(s, 78));
+  return {
+    h,
+    grey,
+    /** Screen, light theme. */
+    fgLight: `hsl(${h} ${sat}% 30%)`,
+    bgLight: `hsl(${h} ${grey ? 0 : Math.min(sat, 60)}% ${grey ? 94 : 93}%)`,
+    /** Screen, dark theme. */
+    fgDark: `hsl(${h} ${grey ? 0 : Math.min(sat, 65)}% ${grey ? 80 : 72}%)`,
+    bgDark: `hsl(${h} ${grey ? 0 : Math.min(sat, 40)}% ${grey ? 22 : 20}%)`,
+    /** Paper. The light-theme pair, as RGB. */
+    fgPrint: hslToRgb(h, sat, 30),
+    bgPrint: hslToRgb(h, grey ? 0 : Math.min(sat, 60), grey ? 94 : 93),
+  };
+}

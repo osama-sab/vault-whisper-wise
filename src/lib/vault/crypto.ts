@@ -19,6 +19,24 @@ export class WrongPassphraseError extends Error {
   }
 }
 
+/**
+ * The keyring is missing or unreadable, but an encrypted vault is sitting
+ * right next to it.
+ *
+ * Treating that as a fresh install is the one mistake this code must never
+ * make: it would mint a new key and write an empty document over data that
+ * nothing can decrypt afterwards.
+ */
+export class VaultKeyMissingError extends Error {
+  constructor(
+    message = "Your data file is here, but the key that opens it is missing. " +
+      "Nothing has been changed. Restore your keyring or a backup before continuing."
+  ) {
+    super(message);
+    this.name = "VaultKeyMissingError";
+  }
+}
+
 export class VaultCorruptError extends Error {
   constructor(message = "The vault file could not be read. It may be damaged.") {
     super(message);

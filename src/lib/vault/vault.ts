@@ -1,5 +1,5 @@
 import {
-  DEFAULT_ITERATIONS, WrongPassphraseError, fromB64, generateDataKey,
+  DEFAULT_ITERATIONS, VaultKeyMissingError, WrongPassphraseError, fromB64, generateDataKey,
   openDocument, sealDocument, toB64, unwrapWithPassphrase, wrapWithPassphrase,
 } from "./crypto";
 import { createIO, registerShellHooks, reportDirty, type OsCrypto, type VaultIO } from "./io";
@@ -74,8 +74,18 @@ export class Vault {
     this.keyring = await this.io.readKeyring();
 
     if (!this.keyring) {
-      // No keyring means this install has never had a vault: either a fresh
-      // start, or data still sitting in the old plaintext IndexedDB.
+      // No keyring SHOULD mean this install has never had a vault: either a
+      // fresh start, or data still sitting in the old plaintext IndexedDB.
+      //
+      // But "no keyring" is also what a failed read looks like, and the lines
+      // below mint a new key and persist a document — which would write an
+      // empty vault over real, still-encrypted data that the new key could
+      // never open. So before assuming "fresh", look for a vault file. If one
+      // is there, this is not a fresh install, and the honest thing is to stop
+      // rather than overwrite it.
+      const stranded = await this.io.readVault().catch(() => null);
+      if (stranded) throw new VaultKeyMissingError();
+
       this.keyring = await this.createKeyring();
       this.dataKey = await this.unwrap(this.keyring.wrap);
 

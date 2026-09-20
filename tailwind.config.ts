@@ -18,12 +18,14 @@ export default {
         hairline: "hsl(var(--hairline))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
+        ground: "hsl(var(--ground))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
           glow: "hsl(var(--primary-glow))",
+          soft: "hsl(var(--primary-soft))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
@@ -41,6 +43,8 @@ export default {
           DEFAULT: "hsl(var(--warning))",
           foreground: "hsl(var(--warning-foreground))",
         },
+        household: "hsl(var(--household))",
+        personal: "hsl(var(--personal))",
         income: "hsl(var(--income))",
         expense: "hsl(var(--expense))",
         bills: "hsl(var(--bills))",
@@ -77,11 +81,31 @@ export default {
         sm: "var(--shadow-sm)",
         card: "var(--shadow-card)",
         raised: "var(--shadow-raised)",
+        panel: "var(--shadow-panel)",
       },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        /* The two radii the layout itself is built from: panels and cards. */
+        panel: "1.5rem",
+        card: "1.125rem",
+      },
+      maxWidth: {
+        /* One measure for every page's content, so the column does not
+           stretch to the width of a 4K window. */
+        shell: "1080px",
+      },
+      fontFamily: {
+        sans: [
+          "Inter",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI Variable Text",
+          "Segoe UI",
+          "system-ui",
+          "sans-serif",
+        ],
       },
       keyframes: {
         "accordion-down": {
@@ -100,10 +124,15 @@ export default {
             height: "0",
           },
         },
+        rise: {
+          from: { opacity: "0", transform: "translateY(6px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "rise": "rise 0.24s ease-out both",
       },
     },
   },

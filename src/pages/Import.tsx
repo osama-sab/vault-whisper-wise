@@ -15,9 +15,18 @@ import { Switch } from "@/components/ui/switch";
 import type { Category, ProfileId, Transaction } from "@/lib/types";
 import { Upload, ArrowDownLeft, ArrowUpRight, Sparkles, FileText, Eye, ChevronRight, AlertTriangle, Check, CalendarDays } from "lucide-react";
 import { MerchantLogo } from "@/components/MerchantLogo";
+import { CategorySelect, ProfileTag } from "@/components/CategorySelect";
 import { formatDate, profileLabel } from "@/lib/format";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { Card, CardHead, FieldLabel, Note } from "@/components/ui/surface";
+
+/** What each step is called on the rail at the top of the page. */
+const STEP_LABEL: Record<Step, string> = {
+  format: "Choose file",
+  preview: "Check columns",
+  review: "Review & import",
+};
 
 interface Pending extends ParsedRow {
   key: string;
@@ -44,7 +53,7 @@ const DATE_ORDER_LABEL: Record<DateOrder, string> = {
 };
 
 export default function ImportPage() {
-  const { categories, rules, transactions, bulkAddTransactions, upsertRule } = useApp();
+  const { categories, rules, transactions, settings, bulkAddTransactions, upsertRule } = useApp();
   const [step, setStep] = useState<Step>("format");
   const [format, setFormat] = useState<BankFormat>("sparkasse");
   const [file, setFile] = useState<File | null>(null);
@@ -155,8 +164,14 @@ export default function ImportPage() {
     const merchantMatch = autoCategorizeMerchant(r.payee, r.description, categories, isCredit);
     if (merchantMatch) return mkPending(r, merchantMatch.categoryId, merchantMatch.profile, "merchant");
 
-    const fallback = categories.find(ofDirection) ?? categories[0];
-    return mkPending(r, fallback?.id ?? "", fallback?.profileDefault ?? "household", false);
+    // Fall back inside the profile the app is currently showing, so a bulk
+    // import while "Personal" is selected does not land in household budgets.
+    const preferred: ProfileId = settings.activeProfile === "personal" ? "personal" : "household";
+    const fallback =
+      categories.find((c) => ofDirection(c) && c.profileDefault === preferred)
+      ?? categories.find(ofDirection)
+      ?? categories[0];
+    return mkPending(r, fallback?.id ?? "", fallback?.profileDefault ?? preferred, false);
   }
 
   function mkPending(r: ParsedRow, categoryId: string, profile: ProfileId, matched: Pending["matched"]): Pending {
@@ -180,6 +195,36 @@ export default function ImportPage() {
 
   function patch(i: number, changes: Partial<Pending>) {
     setPending((s) => s.map((x, j) => (j === i ? { ...x, ...changes } : x)));
+  }
+
+  /**
+   * Move a row to the other profile, taking its category with it.
+   *
+   * Without this the row kept a category belonging to the profile it just
+   * left, which is the state that let household categories be filed against
+   * personal transactions. Where the same category name exists in both worlds
+   * (most people have "Groceries" twice) the equivalent one is picked, so the
+   * choice survives the move.
+   */
+  function setRowProfile(i: number, profile: ProfileId) {
+    setPending((s) => s.map((x, j) => {
+      if (j !== i) return x;
+      const current = categories.find((c) => c.id === x.categoryId);
+      if (current && current.profileDefault === profile) return { ...x, profile };
+
+      const isIn = x.amount > 0;
+      const ofDirection = (c: Category) => (isIn ? c.type === "income" : c.type !== "income");
+      const inProfile = categories
+        .filter((c) => c.profileDefault === profile && ofDirection(c))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+
+      const twin = current && inProfile.find(
+        (c) => c.name.toLowerCase() === current.name.toLowerCase()
+      );
+      const sameType = current && inProfile.find((c) => c.type === current.type);
+      const next = twin ?? sameType ?? inProfile[0];
+      return { ...x, profile, categoryId: next?.id ?? "", matched: false as const };
+    }));
   }
 
   async function importNow() {
@@ -224,30 +269,47 @@ export default function ImportPage() {
 
   return (
     <div className="space-y-4">
-      {/* Progress */}
-      <div className="flex items-center gap-2 px-1">
+      {/* Where you are in the three steps. The dots on their own said "1 2 3"
+          and nothing about what each one was. */}
+      <div className="flex items-center gap-2 max-w-2xl">
         {steps.map((s, i) => (
-          <div key={s} className="flex items-center gap-2 flex-1">
-            <div className={cn("w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0",
-              step === s ? "bg-primary text-primary-foreground"
-                : stepIndex > i ? "bg-primary/20 text-primary" : "bg-secondary text-muted-foreground")}>
-              {stepIndex > i ? <Check size={12} /> : i + 1}
+          <div key={s} className="flex items-center gap-2 flex-1 min-w-0">
+            <div className={cn(
+              "flex items-center gap-2 min-w-0 rounded-full pl-1 pr-3 py-1 transition-colors",
+              step === s ? "bg-primary/10" : ""
+            )}>
+              <span className={cn(
+                "w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center flex-shrink-0",
+                step === s ? "bg-primary text-primary-foreground"
+                  : stepIndex > i ? "bg-primary/20 text-primary" : "bg-secondary text-muted-foreground"
+              )}>
+                {stepIndex > i ? <Check size={12} /> : i + 1}
+              </span>
+              <span className={cn(
+                "text-[12px] font-medium truncate",
+                step === s ? "text-primary" : "text-muted-foreground"
+              )}>
+                {STEP_LABEL[s]}
+              </span>
             </div>
             {i < 2 && <div className="flex-1 h-px bg-border" />}
           </div>
         ))}
       </div>
 
-      {/* STEP 1 — FORMAT */}
+      {/* STEP 1 — FORMAT. A form, so it is capped at a form's width rather
+          than stretched across the whole window. */}
       {step === "format" && (
-        <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <FileText size={18} className="text-primary" />
-            <h2 className="font-semibold">Import a bank statement</h2>
-          </div>
-          <p className="text-sm text-muted-foreground max-w-[62ch]">
-            Export a CSV from your bank and open it here. Transactions are categorised using your rules and
-            the built-in store list. Everything is processed on this computer — nothing is uploaded.
+        <Card className="max-w-2xl space-y-4">
+          <CardHead
+            icon={FileText}
+            title="Import a bank statement"
+            hint="Everything is processed on this computer"
+            tight
+          />
+          <p className="text-sm text-muted-foreground">
+            Export a CSV from your bank and open it here. Transactions are categorised using your rules
+            and the built-in store list — nothing is uploaded.
           </p>
 
           <div>
@@ -272,24 +334,24 @@ export default function ImportPage() {
 
           <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onFileSelected(f); e.target.value = ""; }} />
-          <Button onClick={() => fileRef.current?.click()} className="w-full sm:w-auto" disabled={busy}>
+          <Button onClick={() => fileRef.current?.click()} className="w-full sm:w-auto rounded-full" disabled={busy}>
             <Upload size={16} className="mr-2" /> {busy ? "Reading…" : "Choose CSV file"}
           </Button>
-        </div>
+        </Card>
       )}
 
       {/* STEP 2 — PREVIEW */}
       {step === "preview" && preview && (
-        <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-4">
-          <div>
-            <h2 className="font-semibold">Check the columns</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {preview.count} rows in {file?.name}. Confirm this looks right before importing.
-            </p>
-          </div>
+        <Card className="space-y-4">
+          <CardHead
+            icon={FileText}
+            title="Check the columns"
+            hint={preview.count + " rows in " + (file?.name ?? "this file")}
+            tight
+          />
 
           {/* What the app matched each field to */}
-          <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
             <MappingRow label="Date" col={preview.mapping.date} />
             <MappingRow label="Amount" col={preview.mapping.amount} />
             <MappingRow label="Payee" col={preview.mapping.payee} />
@@ -365,22 +427,27 @@ export default function ImportPage() {
           </div>
 
           <div className="flex gap-2">
-            <Button variant="outline" className="flex-1" onClick={() => { setStep("format"); setPreview(null); }}>
+            <Button variant="outline" className="flex-1 rounded-full" onClick={() => { setStep("format"); setPreview(null); }}>
               Back
             </Button>
-            <Button className="flex-1" onClick={proceedToReview} disabled={busy}>
+            <Button className="flex-1 rounded-full" onClick={proceedToReview} disabled={busy}>
               {busy ? "Reading…" : <>Continue — read {preview.count} rows <ChevronRight size={14} className="ml-1" /></>}
             </Button>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* STEP 3 — REVIEW */}
       {step === "review" && (
         <>
-          <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-3">
-            <h2 className="font-semibold">Review and import</h2>
-            <div className="grid grid-cols-4 gap-2 text-xs">
+          <Card className="space-y-3">
+            <CardHead
+              icon={Eye}
+              title="Review and import"
+              hint={stats.selected + " of " + pending.length + " rows selected"}
+              tight
+            />
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
               <Stat label="Selected" value={`${stats.selected}`} />
               <Stat label="By rules" value={`${stats.matchedRule}`} icon={<Sparkles size={10} className="text-primary" />} />
               <Stat label="By store" value={`${stats.matchedMerchant}`} icon={<Eye size={10} className="text-primary" />} />
@@ -410,31 +477,32 @@ export default function ImportPage() {
               <Button size="sm" variant="outline" onClick={() => setPending((s) => s.map((p) => ({ ...p, isVague: false })))}>None vague</Button>
               <div className="flex-1" />
               <Button size="sm" variant="outline" onClick={() => setStep("preview")}>Back</Button>
-              <Button size="sm" onClick={importNow}>Import {stats.selected}</Button>
+              <Button size="sm" className="rounded-full" onClick={importNow}>Import {stats.selected}</Button>
             </div>
-          </div>
+          </Card>
 
           {pending.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-10">
-              Nothing new to import — every row in this file is already recorded.
-            </p>
+            <Note>Nothing new to import — every row in this file is already recorded.</Note>
           )}
 
           <div className="space-y-2">
             {pending.map((p, i) => {
               const isIn = p.amount > 0;
-              // All categories of the right direction are offered, grouped by
-              // their default profile — filing a household-default category
-              // against the personal profile is a legitimate thing to want.
+              // Of the right direction AND of the row's profile. CategorySelect
+              // groups and sorts what is left.
               const choices = categories.filter((c) => (isIn ? c.type === "income" : c.type !== "income"));
               return (
-                <div key={p.key} className={cn("bg-card border border-hairline rounded-xl shadow-card p-3 space-y-2",
-                  p.selected ? "border-border" : "border-border/30 opacity-50")}>
+                <div key={p.key} className={cn(
+                  "bg-card border rounded-card shadow-sm p-3 space-y-2 transition-opacity",
+                  p.selected ? "border-hairline" : "border-hairline/50 opacity-55")}>
                   <div className="flex items-center gap-2">
                     <Checkbox checked={p.selected} onCheckedChange={(v) => patch(i, { selected: !!v })} />
                     <MerchantLogo payee={p.payee} size={28} />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{p.payee || p.description || "—"}</p>
+                      <p className="text-sm font-medium truncate flex items-center gap-2">
+                        <span className="truncate">{p.payee || p.description || "—"}</span>
+                        <ProfileTag profile={p.profile} size="xs" className="flex-shrink-0" />
+                      </p>
                       <p className="text-[11px] text-muted-foreground truncate">
                         {formatDate(p.date, { day: "numeric", month: "short", year: "numeric" })}
                         {p.description && p.payee ? ` · ${p.description}` : ""}
@@ -447,25 +515,21 @@ export default function ImportPage() {
                     </div>
                   </div>
                   <div className="grid grid-cols-3 gap-2">
-                    <Select value={p.profile} onValueChange={(v) => patch(i, { profile: v as ProfileId })}>
+                    <Select value={p.profile} onValueChange={(v) => setRowProfile(i, v as ProfileId)}>
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="household">Household</SelectItem>
                         <SelectItem value="personal">Personal</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Select value={p.categoryId} onValueChange={(v) => patch(i, { categoryId: v, matched: false })}>
-                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {choices.length === 0
-                          ? <div className="px-2 py-1.5 text-xs text-muted-foreground">No {isIn ? "income" : "expense"} categories</div>
-                          : choices.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>
-                              {c.name} <span className="text-muted-foreground">· {profileLabel(c.profileDefault)}</span>
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                    <CategorySelect
+                      className="h-8 text-xs"
+                      categories={choices}
+                      profile={p.profile}
+                      value={p.categoryId}
+                      onChange={(v) => patch(i, { categoryId: v, matched: false })}
+                      placeholder={"No " + (isIn ? "income" : "expense") + " categories"}
+                    />
                     <div className="flex items-center gap-1.5">
                       <Switch checked={p.isVague} onCheckedChange={(v) => patch(i, { isVague: !!v })} />
                       <span className="text-[10px] text-muted-foreground">Vague</span>
@@ -508,9 +572,9 @@ function MappingRow({ label, col }: { label: string; col: string | null }) {
 
 function Stat({ label, value, icon, color }: { label: string; value: string; icon?: React.ReactNode; color?: string }) {
   return (
-    <div className="bg-secondary rounded-lg p-2 text-center">
-      <p className="text-muted-foreground text-[10px] uppercase tracking-wide flex items-center justify-center gap-1">{icon}{label}</p>
-      <p className={cn("font-semibold text-xs mt-0.5 tabular-nums", color)}>{value}</p>
+    <div className="bg-secondary/70 rounded-xl px-3 py-2.5">
+      <p className={cn("font-semibold text-[17px] tabular-nums leading-none", color)}>{value}</p>
+      <FieldLabel className="mt-1.5 flex items-center gap-1">{icon}{label}</FieldLabel>
     </div>
   );
 }

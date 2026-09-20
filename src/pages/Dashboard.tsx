@@ -2,22 +2,47 @@ import { useMemo, useState } from "react";
 import { useApp } from "@/lib/store";
 import { formatMoney, formatDate, isInMonth } from "@/lib/format";
 import { reconcileMonth, filterByProfile } from "@/lib/budget";
-import { Wallet, TrendingUp, TrendingDown, PiggyBank, CreditCard, ChevronLeft, ChevronRight, Repeat, Download, type LucideIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import {
+  Wallet, TrendingUp, TrendingDown, PiggyBank, CreditCard, Repeat, Download,
+  Target, X, SlidersHorizontal, ChevronDown, type LucideIcon,
+} from "lucide-react";
 import { DiscreetText } from "@/components/Discreet";
 import { CategoryIcon, CategoryGlyph, MerchantLogo } from "@/components/MerchantLogo";
 import ExportDialog from "@/components/ExportDialog";
 import CashflowChart from "@/components/CashflowChart";
-import { Card, StatTile, SectionTitle, type Tone } from "@/components/ui/surface";
+import SpendingDonut, { type SpendSlice } from "@/components/SpendingDonut";
+import { TopExpenses, OverBudget, type BudgetBreach } from "@/components/Rankings";
+import { ProfileTag } from "@/components/CategorySelect";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
+import {
+  Card, CardHead, StatTile, MonthStepper, IconButton, EmptyState, type Tone,
+} from "@/components/ui/surface";
+import { cn } from "@/lib/utils";
+import { DASHBOARD_PANELS, panelsOf, type DashboardPanel } from "@/lib/types";
+
+/** What each panel is called where the user chooses it. */
+const PANEL_LABEL: Record<DashboardPanel, { title: string; hint: string }> = {
+  summary: { title: "Summary tiles", hint: "Income, expenses, bills, savings, debt" },
+  trend: { title: "Money in vs out", hint: "The 1 / 3 / 12-month trend" },
+  categories: { title: "Where it went", hint: "This month's spending as a share" },
+  top: { title: "Top 5 expenses", hint: "The largest single payments" },
+  overbudget: { title: "Over budget", hint: "Categories past their limit" },
+  budgets: { title: "All budgets", hint: "Every category with its progress" },
+};
 
 export default function Dashboard() {
-  const { transactions, categories, subscriptions, settings, billPayments } = useApp();
+  const { transactions, categories, subscriptions, settings, billPayments, saveSettings } = useApp();
   const [month, setMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [showAllBudgets, setShowAllBudgets] = useState(false);
+
+  const visible = panelsOf(settings);
+  const shows = (p: DashboardPanel) => visible.includes(p);
 
   // Month membership by yyyy-mm prefix — new Date("2026-04-01") parses as UTC
   // midnight and lands in the previous month west of UTC.
@@ -65,6 +90,8 @@ export default function Dashboard() {
   const committed = recon.debit + recon.stillExpected;
   const leftToSpend = recon.credit - committed;
   const leftToBudget = totalBudget - committed;
+  /** How much of what came in is already spoken for. */
+  const usedPct = recon.credit > 0 ? Math.min(100, (committed / recon.credit) * 100) : 0;
 
   const byCategory = useMemo(() => {
     const spendOf = (id: string) => {
@@ -82,201 +109,365 @@ export default function Dashboard() {
       .filter(({ c, spent }) => spent !== 0 || (c.monthlyBudget > 0 && c.type !== "income"));
   }, [recon, categories, settings.activeProfile]);
 
+  /** Money actually spent, per category — what the donut divides up. */
+  const slices = useMemo<SpendSlice[]>(
+    () => byCategory
+      .filter(({ c }) => c.type !== "income")
+      .map(({ c, spent }) => ({ id: c.id, name: c.name, value: Math.abs(spent), category: c }))
+      .filter((s) => s.value > 0),
+    [byCategory]
+  );
+
+  /** Budgets broken, worst overspend first. */
+  const breaches = useMemo<BudgetBreach[]>(
+    () => byCategory
+      .filter(({ c, spent }) => c.type !== "income" && c.monthlyBudget > 0 && Math.abs(spent) > c.monthlyBudget)
+      .map(({ c, spent }) => ({
+        category: c,
+        spent: Math.abs(spent),
+        budget: c.monthlyBudget,
+        over: Math.abs(spent) - c.monthlyBudget,
+        pct: (Math.abs(spent) / c.monthlyBudget) * 100,
+      }))
+      .sort((a, b) => b.over - a.over),
+    [byCategory]
+  );
+
   // Hoisted out of the render loop, where it was recomputed for every row.
   const maxSpent = useMemo(
     () => Math.max(0, ...byCategory.map((x) => Math.abs(x.spent))),
     [byCategory]
   );
 
+  const selected = selectedCategoryId ? categories.find((x) => x.id === selectedCategoryId) : null;
+
+  /** The budgets list is long; show the busiest and let it expand. */
+  const BUDGET_PREVIEW = 6;
+  const budgetRows = useMemo(
+    () => [...byCategory].sort((a, b) => Math.abs(b.spent) - Math.abs(a.spent)),
+    [byCategory]
+  );
+  const shownBudgets = showAllBudgets ? budgetRows : budgetRows.slice(0, BUDGET_PREVIEW);
+
+  function togglePanel(panel: DashboardPanel, on: boolean) {
+    const next = on ? [...visible, panel] : visible.filter((p) => p !== panel);
+    // Stored in canonical order so the layout never depends on click order.
+    saveSettings({ dashboardPanels: DASHBOARD_PANELS.filter((p) => next.includes(p)) });
+  }
+
   return (
-    <div className="space-y-5">
-      {/* The stepper is one control, so its parts stay together on the left
-          rather than being flung to the edges of a wide window. */}
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">
-          {month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
-        </h1>
-        <div className="flex items-center gap-1">
+    <div className="space-y-4">
+      {/* The page's own toolbar: the scope on the left, what the page can do
+          on the right. */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <MonthStepper month={month} onChange={setMonth} />
+        <div className="flex items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className="inline-flex items-center gap-2 rounded-full bg-secondary px-3.5 py-2 text-[13px] font-medium text-secondary-foreground hover:bg-accent transition-colors">
+                <SlidersHorizontal size={15} />
+                Customise
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-[19rem] p-2">
+              <p className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                Panels on this page
+              </p>
+              <div className="space-y-0.5">
+                {DASHBOARD_PANELS.map((p) => (
+                  <label
+                    key={p}
+                    className="flex items-start gap-3 rounded-lg px-2 py-2 hover:bg-secondary/60 cursor-pointer"
+                  >
+                    <Switch
+                      checked={shows(p)}
+                      onCheckedChange={(v) => togglePanel(p, v)}
+                      aria-label={PANEL_LABEL[p].title}
+                      className="mt-0.5 flex-shrink-0"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium leading-tight">{PANEL_LABEL[p].title}</span>
+                      <span className="block text-[11px] text-muted-foreground">{PANEL_LABEL[p].hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+
           <button
-            className="p-1.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            aria-label="Previous month"
-            onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
+            onClick={() => setExportOpen(true)}
+            className="inline-flex items-center gap-2 rounded-full bg-foreground text-background px-4 py-2 text-[13px] font-medium hover:opacity-90 transition-opacity"
           >
-            <ChevronLeft size={18} />
-          </button>
-          <button
-            className="p-1.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            aria-label="Next month"
-            onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
-          >
-            <ChevronRight size={18} />
+            <Download size={15} />
+            Export report
           </button>
         </div>
       </div>
 
       {/*
         The balance card answers the one question the page exists for, so it
-        takes the accent fill and the largest type. Everything below it is
-        supporting detail on plain surfaces.
+        takes the accent fill and the largest type; the trend sits beside it
+        rather than below, which is what the width is for.
       */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary to-primary-glow px-6 py-5 text-primary-foreground shadow-raised">
-        {/* A soft highlight, so a large flat fill does not read as a slab. */}
-        <div aria-hidden className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-white/10 blur-2xl" />
-        <div className="relative">
-          <p className="text-[11px] font-medium uppercase tracking-wider opacity-80">Left to spend</p>
-          <p className="text-[2.5rem] leading-none font-semibold mt-2 tabular-nums tracking-tight">
-            <DiscreetText fallback="••••">{formatMoney(leftToSpend, settings.currency)}</DiscreetText>
-          </p>
-          {/* Three related figures kept together: justify-between flung them to
-              opposite edges of a wide window and they stopped reading as a set. */}
-          <div className="mt-5 grid grid-cols-3 gap-5 max-w-lg border-t border-white/20 pt-4">
-            {([
-              ["Income", recon.credit],
-              ["Spent", committed],
-              ["Left to budget", leftToBudget],
-            ] as const).map(([label, amount]) => (
-              <div key={label}>
-                <p className="text-[11px] uppercase tracking-wider opacity-70">{label}</p>
-                <p className="font-semibold tabular-nums mt-0.5">
-                  <DiscreetText fallback="••••">{formatMoney(amount, settings.currency)}</DiscreetText>
-                </p>
+      <div className={cn("grid gap-4 items-stretch", shows("trend") && "xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]")}>
+        <div className="hero-surface relative overflow-hidden rounded-card px-6 py-5 shadow-raised flex flex-col">
+          {/* A soft highlight, so a large flat fill does not read as a slab. */}
+          <div aria-hidden className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-white/10 blur-2xl" />
+          <div className="relative flex flex-col h-full">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center justify-center w-8 h-8 rounded-[10px] bg-white/20">
+                <Wallet size={16} />
+              </span>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] opacity-85">Left to spend</p>
+            </div>
+
+            <div className="flex-1 flex flex-col justify-center py-4">
+              <p className="text-[2.75rem] leading-none font-semibold tabular-nums tracking-tight">
+                <DiscreetText fallback="••••">{formatMoney(leftToSpend, settings.currency)}</DiscreetText>
+              </p>
+
+              {/* One bar for "how much of this month's income is spoken for" —
+                  the figure above is a number, this is the shape of it. */}
+              <div className="mt-5 h-1.5 rounded-full bg-white/25 overflow-hidden">
+                <div className="h-full rounded-full bg-white/90" style={{ width: `${usedPct}%` }} />
               </div>
-            ))}
+              <p className="text-[11px] opacity-85 mt-1.5">
+                {recon.credit > 0
+                  ? `${Math.round(usedPct)}% of this month's income is committed`
+                  : "No income recorded for this month yet"}
+              </p>
+            </div>
+
+            {/* Three related figures kept together: justify-between flung them
+                to opposite edges of a wide window and they stopped reading as
+                a set. */}
+            <div className="pt-3.5 grid grid-cols-3 gap-4 border-t border-white/25">
+              {([
+                ["Income", recon.credit],
+                ["Spent", committed],
+                ["To budget", leftToBudget],
+              ] as const).map(([label, amount]) => (
+                <div key={label} className="min-w-0">
+                  <p className="text-[10px] uppercase tracking-[0.1em] opacity-70 truncate">{label}</p>
+                  <p className="font-semibold tabular-nums mt-0.5 truncate">
+                    <DiscreetText fallback="••••">{formatMoney(amount, settings.currency)}</DiscreetText>
+                  </p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
+
+        {shows("trend") && <CashflowChart endMonth={month} />}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <SummaryCard icon={TrendingUp} label="Income" value={totals.income} tone="income" currency={settings.currency} />
-        <SummaryCard icon={TrendingDown} label="Expenses" value={totals.expenses} tone="expense" currency={settings.currency} />
-        <SummaryCard icon={Wallet} label="Bills" value={totals.bills} tone="bills" currency={settings.currency} />
-        <SummaryCard icon={PiggyBank} label="Savings" value={totals.savings} tone="savings" currency={settings.currency} />
-        <SummaryCard icon={CreditCard} label="Debt" value={totals.debt} tone="debt" currency={settings.currency} />
-        <SummaryCard icon={Repeat} label="Bills still due" value={recon.stillExpected} tone="bills" currency={settings.currency} />
-      </div>
+      {shows("summary") && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+          <SummaryCard icon={TrendingUp} label="Income" value={totals.income} tone="income" currency={settings.currency} />
+          <SummaryCard icon={TrendingDown} label="Expenses" value={totals.expenses} tone="expense" currency={settings.currency} />
+          <SummaryCard icon={Wallet} label="Bills" value={totals.bills} tone="bills" currency={settings.currency} />
+          <SummaryCard icon={PiggyBank} label="Savings" value={totals.savings} tone="savings" currency={settings.currency} />
+          <SummaryCard icon={CreditCard} label="Debt" value={totals.debt} tone="debt" currency={settings.currency} />
+          <SummaryCard icon={Repeat} label="Still due" value={recon.stillExpected} tone="bills" currency={settings.currency} />
+        </div>
+      )}
 
       {(recon.outstanding.length > 0 || recon.fulfilled.length > 0) && (
-        <Card className="p-4 text-xs text-muted-foreground">
-          {recon.fulfilled.length > 0 && (
-            <span>
-              <span className="font-medium text-success">{recon.fulfilled.length} of {profileSubs.filter((s) => s.active).length}</span>{" "}
-              subscriptions already paid this month.{" "}
-            </span>
-          )}
-          {recon.outstanding.length > 0 ? (
-            <span>
-              <span className="font-medium text-foreground">{formatMoney(recon.stillExpected, settings.currency)}</span>{" "}
-              still expected for {recon.outstanding.map((s) => s.name).join(", ")}.
-            </span>
-          ) : (
-            <span>Nothing further is expected.</span>
-          )}
+        <Card className="py-3 px-4 flex items-start gap-3">
+          <CategoryIcon type="bills" size="sm" />
+          <p className="text-xs text-muted-foreground leading-relaxed min-w-0">
+            {recon.fulfilled.length > 0 && (
+              <span>
+                <span className="font-semibold text-success">
+                  {recon.fulfilled.length} of {profileSubs.filter((s) => s.active).length}
+                </span>{" "}
+                subscriptions already paid this month.{" "}
+              </span>
+            )}
+            {recon.outstanding.length > 0 ? (
+              <span>
+                <span className="font-semibold text-foreground">{formatMoney(recon.stillExpected, settings.currency)}</span>{" "}
+                still expected for {recon.outstanding.map((s) => s.name).join(", ")}.
+              </span>
+            ) : (
+              <span>Nothing further is expected.</span>
+            )}
+          </p>
         </Card>
       )}
 
-      <CashflowChart endMonth={month} />
+      {/* The share and the ranking answer different halves of "where did it
+          go", so they sit side by side. */}
+      {(shows("categories") || shows("top")) && (
+        <div className={cn("grid gap-4 items-stretch", shows("categories") && shows("top") && "xl:grid-cols-2")}>
+          {shows("categories") && (
+            <SpendingDonut
+              slices={slices}
+              currency={settings.currency}
+              hint={month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+            />
+          )}
+          {shows("top") && (
+            <TopExpenses
+              transactions={monthTx}
+              categories={categories}
+              currency={settings.currency}
+              discreet={settings.discreetMode}
+            />
+          )}
+        </div>
+      )}
 
-      <Card>
-        <SectionTitle>Budgets</SectionTitle>
-        {byCategory.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No activity this month yet.</p>
-        ) : (
-          <div className="space-y-3">
-            {byCategory.map(({ c, spent, pending }) => {
-              const hasBudget = c.monthlyBudget > 0;
-              const pct = hasBudget
-                ? Math.min(120, (Math.abs(spent) / c.monthlyBudget) * 100)
-                : maxSpent > 0 ? (Math.abs(spent) / maxSpent) * 100 : 0;
-              const isSelected = selectedCategoryId === c.id;
-              return (
-                <button
-                  key={c.id}
-                  onClick={() => setSelectedCategoryId(isSelected ? null : c.id)}
-                  className={"w-full text-left rounded-xl p-2 -mx-2 transition-colors " + (isSelected ? "bg-primary/5 ring-1 ring-primary/20" : "hover:bg-secondary/50")}
-                >
-                  <div className="flex justify-between text-sm gap-2">
-                    <span className="font-medium flex items-center gap-1.5 min-w-0">
-                      <CategoryGlyph type={c.type} size={15} />
-                      <span className="truncate">{c.name}</span>
-                      {pending > 0 && <span className="text-[10px] text-muted-foreground flex-shrink-0">· {formatMoney(pending, settings.currency)} due</span>}
-                    </span>
-                    <span className="text-muted-foreground tabular-nums flex-shrink-0">
-                      <DiscreetText fallback="••">{formatMoney(Math.abs(spent), settings.currency)}</DiscreetText>
-                      {hasBudget && <> / {formatMoney(c.monthlyBudget, settings.currency)}</>}
-                    </span>
+      {shows("overbudget") && <OverBudget breaches={breaches} currency={settings.currency} />}
+
+      {/* Budgets, and the drill-down they open, side by side on a wide window
+          instead of the detail card pushing everything below the fold. */}
+      {(shows("budgets") || selected) && (
+        <div className={cn("grid gap-4 items-start", selected && shows("budgets") && "xl:grid-cols-2")}>
+          {shows("budgets") && (
+            <Card>
+              <CardHead
+                icon={Target}
+                title="Budgets"
+                hint={byCategory.length > 0 ? `${byCategory.length} categories this month` : undefined}
+              />
+              {byCategory.length === 0 ? (
+                <EmptyState icon={Target} title="No activity this month yet">
+                  Add a transaction or import a statement and the categories fill in here.
+                </EmptyState>
+              ) : (
+                <>
+                  <div className={cn("grid gap-x-6 gap-y-1", selected ? "grid-cols-1" : "xl:grid-cols-2")}>
+                    {shownBudgets.map(({ c, spent, pending }) => {
+                      const hasBudget = c.monthlyBudget > 0;
+                      const pct = hasBudget
+                        ? Math.min(120, (Math.abs(spent) / c.monthlyBudget) * 100)
+                        : maxSpent > 0 ? (Math.abs(spent) / maxSpent) * 100 : 0;
+                      const isSelected = selectedCategoryId === c.id;
+                      return (
+                        <button
+                          key={c.id}
+                          onClick={() => setSelectedCategoryId(isSelected ? null : c.id)}
+                          className={cn(
+                            "w-full text-left rounded-xl px-2.5 py-2 transition-colors",
+                            isSelected ? "bg-primary/[0.07] ring-1 ring-primary/20" : "hover:bg-secondary/60"
+                          )}
+                        >
+                          <div className="flex justify-between text-[13px] gap-2">
+                            <span className="font-medium flex items-center gap-2 min-w-0">
+                              <CategoryGlyph type={c.type} size={15} />
+                              <span className="truncate">{c.name}</span>
+                              {pending > 0 && (
+                                <span className="text-[10px] text-bills bg-bills/10 rounded-full px-1.5 py-0.5 flex-shrink-0">
+                                  {formatMoney(pending, settings.currency)} due
+                                </span>
+                              )}
+                            </span>
+                            <span className="text-muted-foreground tabular-nums flex-shrink-0">
+                              <DiscreetText fallback="••">{formatMoney(Math.abs(spent), settings.currency)}</DiscreetText>
+                              {hasBudget && <> / {formatMoney(c.monthlyBudget, settings.currency)}</>}
+                            </span>
+                          </div>
+                          <div className="mt-1.5 h-1.5 rounded-full bg-secondary overflow-hidden">
+                            <div
+                              className={cn(
+                                "h-full rounded-full transition-[width]",
+                                hasBudget && pct > 100 ? "bg-gradient-to-r from-warning to-destructive"
+                                  : hasBudget && pct > 80 ? "bg-gradient-to-r from-warning/70 to-warning"
+                                  : "bg-gradient-to-r from-primary/70 to-primary"
+                              )}
+                              style={{ width: `${Math.min(100, pct)}%` }}
+                            />
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
-                  <div className="mt-1 h-1.5 rounded-full bg-secondary overflow-hidden">
-                    <div
-                      className={
-                        hasBudget && pct > 100 ? "h-full bg-destructive"
-                          : hasBudget && pct > 80 ? "h-full bg-warning"
-                          : "h-full bg-primary"
-                      }
-                      style={{ width: `${Math.min(100, pct)}%` }}
-                    />
+
+                  {budgetRows.length > BUDGET_PREVIEW && (
+                    <button
+                      onClick={() => setShowAllBudgets((v) => !v)}
+                      className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                    >
+                      <ChevronDown size={14} className={cn("transition-transform", showAllBudgets && "rotate-180")} />
+                      {showAllBudgets ? "Show fewer" : `Show all ${budgetRows.length} categories`}
+                    </button>
+                  )}
+                </>
+              )}
+            </Card>
+          )}
+
+          {selected && (() => {
+            const filtered = monthTx
+              .filter((t) => t.categoryId === selected.id)
+              .sort((a, b) => b.date.localeCompare(a.date));
+            const catTotal = filtered.reduce((s, t) => s + Math.abs(t.amount), 0);
+            const isIncome = selected.type === "income";
+            return (
+              <Card className="ring-1 ring-primary/15">
+                <CardHead
+                  title={
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className="truncate">{selected.name}</span>
+                      <ProfileTag profile={selected.profileDefault} size="xs" />
+                    </span>
+                  }
+                  hint={
+                    <>
+                      {filtered.length} transaction{filtered.length === 1 ? "" : "s"} ·{" "}
+                      <span className="tabular-nums font-medium text-foreground">
+                        {formatMoney(catTotal, settings.currency)}
+                      </span>
+                      {selected.monthlyBudget ? ` of ${formatMoney(selected.monthlyBudget, settings.currency)}` : ""}
+                    </>
+                  }
+                  action={
+                    <IconButton onClick={() => setSelectedCategoryId(null)} aria-label="Close category detail">
+                      <X size={16} />
+                    </IconButton>
+                  }
+                />
+                {filtered.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No transactions in this category this month.</p>
+                ) : (
+                  <div className="divide-y divide-hairline -my-1.5 max-h-[22rem] overflow-y-auto">
+                    {filtered.map((t) => {
+                      const hide = settings.discreetMode || t.isVague;
+                      const display = hide
+                        ? t.displayDescription || selected.genericLabel || selected.name || "—"
+                        : t.payee || t.description || "—";
+                      return (
+                        <div key={t.id} className="flex items-center gap-2.5 py-2.5">
+                          <MerchantLogo payee={hide ? "" : (t.payee || "")} size={30} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[13px] truncate">{display}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {formatDate(t.date, { day: "numeric", month: "short" })}
+                            </p>
+                          </div>
+                          <p className={cn("text-[13px] font-semibold tabular-nums", isIncome ? "text-income" : "text-foreground")}>
+                            {isIncome ? "+" : "−"}{formatMoney(Math.abs(t.amount), settings.currency)}
+                          </p>
+                        </div>
+                      );
+                    })}
                   </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </Card>
+                )}
+              </Card>
+            );
+          })()}
+        </div>
+      )}
 
-      {selectedCategoryId && (() => {
-        const cat = categories.find((x) => x.id === selectedCategoryId);
-        const filtered = monthTx.filter((t) => t.categoryId === selectedCategoryId).sort((a, b) => b.date.localeCompare(a.date));
-        const catTotal = filtered.reduce((s, t) => s + Math.abs(t.amount), 0);
-        const isIncome = cat?.type === "income";
-        return (
-          <Card className="border-primary/25 space-y-3">
-            <div className="flex justify-between items-center gap-2">
-              <h3 className="font-semibold text-sm flex items-center gap-1.5 min-w-0">
-                <CategoryIcon type={cat?.type || "expenses"} size="sm" />
-                <span className="truncate">{cat?.name}</span>
-                <span className="text-muted-foreground font-normal flex-shrink-0">
-                  — {filtered.length} transaction{filtered.length === 1 ? "" : "s"}
-                </span>
-              </h3>
-              <button onClick={() => setSelectedCategoryId(null)} className="text-xs text-muted-foreground hover:text-foreground flex-shrink-0">Close</button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Total: <span className="font-medium text-foreground tabular-nums">{formatMoney(catTotal, settings.currency)}</span>
-              {cat?.monthlyBudget ? ` of ${formatMoney(cat.monthlyBudget, settings.currency)} budget` : ""}
-            </p>
-            {filtered.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No transactions in this category this month.</p>
-            ) : (
-              <div className="divide-y divide-border">
-                {filtered.map((t) => {
-                  const hide = settings.discreetMode || t.isVague;
-                  const display = hide
-                    ? t.displayDescription || cat?.genericLabel || cat?.name || "—"
-                    : t.payee || t.description || "—";
-                  return (
-                    <div key={t.id} className="flex items-center gap-2 py-2">
-                      <MerchantLogo payee={hide ? "" : (t.payee || "")} size={28} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm truncate">{display}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {formatDate(t.date, { day: "numeric", month: "short" })}
-                        </p>
-                      </div>
-                      <p className={"text-sm font-semibold tabular-nums " + (isIncome ? "text-income" : "text-foreground")}>
-                        {isIncome ? "+" : "−"}{formatMoney(Math.abs(t.amount), settings.currency)}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
-        );
-      })()}
-
-      <Button variant="outline" className="w-full sm:w-auto" onClick={() => setExportOpen(true)}>
-        <Download size={16} className="mr-2" />
-        Export report
-      </Button>
+      {visible.length === 0 && (
+        <Card>
+          <EmptyState icon={SlidersHorizontal} title="Every panel is switched off">
+            Use “Customise” above to bring the ones you want back.
+          </EmptyState>
+        </Card>
+      )}
 
       <ExportDialog open={exportOpen} onOpenChange={setExportOpen} currentMonth={month} />
     </div>

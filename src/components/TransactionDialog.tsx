@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CategorySelect } from "@/components/CategorySelect";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useApp } from "@/lib/store";
 import { uid } from "@/lib/db";
@@ -182,18 +183,13 @@ export default function TransactionDialog({ open, onOpenChange, editing }: {
           {!splitMode && (
             <div>
               <Label>Category</Label>
-              <Select value={categoryId} onValueChange={setCategoryId}>
-                <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
-                <SelectContent>
-                  {filteredCats.length === 0 ? (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      No {direction === "in" ? "income" : "expense"} categories for {profile}. Add one in Settings.
-                    </div>
-                  ) : (
-                    filteredCats.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)
-                  )}
-                </SelectContent>
-              </Select>
+              <CategorySelect
+                categories={filteredCats}
+                profile={profile}
+                value={categoryId}
+                onChange={setCategoryId}
+                placeholder={`No ${direction === "in" ? "income" : "expense"} categories for ${profile}`}
+              />
             </div>
           )}
 

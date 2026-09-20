@@ -1,14 +1,20 @@
-import { findMerchant, type MerchantInfo } from "@/lib/merchants";
+import { brandTones, findMerchant } from "@/lib/merchants";
 import { useMemo } from "react";
 import { TrendingUp, ReceiptText, ShoppingBag, PiggyBank, CreditCard, type LucideIcon } from "lucide-react";
 import { IconChip, toneText, type Tone } from "@/components/ui/surface";
 import { cn } from "@/lib/utils";
 import type { CategoryType } from "@/lib/types";
 
-/** Renders a small brand-colored circle with the merchant's abbreviation */
+/**
+ * The tile beside a payee.
+ *
+ * `size` is in pixels because callers sit in rows of different heights; the
+ * radius and the type scale with it, so a 28px tile and a 40px tile are the
+ * same object at two sizes rather than two different-looking things.
+ */
 export function MerchantLogo({
   payee,
-  size = 32,
+  size = 36,
   className = "",
 }: {
   payee: string;
@@ -16,68 +22,75 @@ export function MerchantLogo({
   className?: string;
 }) {
   const merchant = useMemo(() => findMerchant(payee), [payee]);
+  const pair = useMemo(() => (merchant ? brandTones(merchant.color) : null), [merchant]);
 
-  if (!merchant) {
-    // Fallback: generic gray circle with first letter
-    const letter = (payee || "?").charAt(0).toUpperCase();
+  const shell = cn(
+    "flex-shrink-0 inline-flex items-center justify-center font-semibold select-none",
+    "ring-1 ring-inset ring-foreground/[0.06]",
+    className
+  );
+  const box = { width: size, height: size, borderRadius: Math.round(size * 0.32) };
+
+  if (!merchant || !pair) {
+    // No match: the initial on the app's own neutral, not a grey slug.
+    const letter = (payee || "?").trim().charAt(0).toUpperCase() || "?";
     return (
-      <div
-        className={`flex-shrink-0 rounded-xl flex items-center justify-center font-semibold text-white ${className}`}
-        style={{
-          width: size,
-          height: size,
-          fontSize: size * 0.4,
-          backgroundColor: "hsl(var(--muted-foreground))",
-        }}
+      <span
+        className={cn(shell, "bg-secondary text-muted-foreground")}
+        style={{ ...box, fontSize: size * 0.4 }}
+        aria-hidden
       >
         {letter}
-      </div>
+      </span>
     );
   }
+
+  const style = {
+    ...box,
+    ["--m-fg" as string]: pair.fgLight,
+    ["--m-bg" as string]: pair.bgLight,
+    ["--m-fg-dark" as string]: pair.fgDark,
+    ["--m-bg-dark" as string]: pair.bgDark,
+  } as React.CSSProperties;
 
   // A real brand mark wins over the monogram when one is defined.
   if (merchant.mark) {
     return (
-      <div
-        className={`flex-shrink-0 rounded-xl flex items-center justify-center ${className}`}
-        style={{ width: size, height: size, backgroundColor: `${merchant.color}1A` }}
+      <span
+        className={cn(shell, "bg-[color:var(--m-bg)] dark:bg-[color:var(--m-bg-dark)]")}
+        style={style}
         title={merchant.label}
       >
-        <svg width={size * 0.62} height={size * 0.62} viewBox="0 0 24 24" fill={merchant.color} aria-hidden="true">
+        <svg
+          width={size * 0.58}
+          height={size * 0.58}
+          viewBox="0 0 24 24"
+          className="fill-[color:var(--m-fg)] dark:fill-[color:var(--m-fg-dark)]"
+          aria-hidden="true"
+        >
           <path d={merchant.mark} />
         </svg>
-      </div>
+      </span>
     );
   }
 
-  // Determine text color (white or black based on brand color brightness)
-  const textColor = isLight(merchant.color) ? "#000" : "#fff";
-
   return (
-    <div
-      className={`flex-shrink-0 rounded-xl flex items-center justify-center font-semibold ${className}`}
+    <span
+      className={cn(
+        shell,
+        "bg-[color:var(--m-bg)] text-[color:var(--m-fg)]",
+        "dark:bg-[color:var(--m-bg-dark)] dark:text-[color:var(--m-fg-dark)]"
+      )}
       style={{
-        width: size,
-        height: size,
-        fontSize: size * (merchant.abbrev.length > 2 ? 0.3 : 0.38),
-        backgroundColor: merchant.color,
-        color: textColor,
+        ...style,
+        fontSize: size * (merchant.abbrev.length > 2 ? 0.3 : 0.37),
         letterSpacing: "-0.02em",
       }}
       title={merchant.label}
     >
       {merchant.abbrev}
-    </div>
+    </span>
   );
-}
-
-/** Check if a hex color is "light" (needs dark text) */
-function isLight(hex: string): boolean {
-  const c = hex.replace("#", "");
-  const r = parseInt(c.substring(0, 2), 16);
-  const g = parseInt(c.substring(2, 4), 16);
-  const b = parseInt(c.substring(4, 6), 16);
-  return (r * 299 + g * 587 + b * 114) / 1000 > 150;
 }
 
 /**

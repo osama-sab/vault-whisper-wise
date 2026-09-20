@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { useApp } from "@/lib/store";
 import { getVault } from "@/lib/vault/vault";
 import { exportPmVault, importPmVault, describePmVault } from "@/lib/vault/pmvault";
+import { readPlainBackup } from "@/lib/vault/plain";
 import { downloadFile } from "@/lib/csv";
 import { flushVault } from "@/lib/db";
 import { isoFromDate } from "@/lib/format";
@@ -82,7 +83,7 @@ export default function SecurityPanel() {
       <PassphraseSection hasPassphrase={hasPassphrase} busy={busy} setBusy={setBusy} />
 
       {/* ── Encrypted backup ───────────────────────── */}
-      <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-3">
+      <div className="bg-card rounded-card border border-hairline shadow-card p-4 space-y-3">
         <div className="flex items-center gap-2">
           <Download size={16} className="text-primary" />
           <p className="font-medium">Encrypted backup</p>
@@ -91,6 +92,15 @@ export default function SecurityPanel() {
           One file holding everything, locked with a password you choose. Unlike the data on this
           computer, it does not depend on your Windows account — this is what survives a new PC,
           a rebuilt profile, or a forgotten passphrase. Keep one somewhere safe.
+        </p>
+        {/* Asymmetric on purpose, and said out loud: anything Pocket Money
+            writes is encrypted, but it will read a plain .json export from
+            another tool so your data can get in from anywhere. */}
+        <p className="text-[11px] text-muted-foreground">
+          Backups are always written encrypted. Restore accepts an encrypted{" "}
+          <span className="font-medium text-foreground">.pmvault</span> or a plain{" "}
+          <span className="font-medium text-foreground">.json</span> export — once it is in, it is
+          stored encrypted like everything else.
         </p>
         <p className="text-[11px] text-muted-foreground">
           {transactions.length} transactions · {categories.length} categories · {accounts.length} accounts
@@ -126,7 +136,7 @@ export default function SecurityPanel() {
         </div>
 
         <input
-          ref={fileRef} type="file" accept=".pmvault,application/json" className="hidden"
+          ref={fileRef} type="file" accept=".pmvault,.json,application/json" className="hidden"
           onChange={async (e) => {
             const f = e.target.files?.[0];
             e.target.value = "";
@@ -135,15 +145,31 @@ export default function SecurityPanel() {
             try {
               const text = await f.text();
               const info = describePmVault(text);
-              if (!info) { toast.error("That is not a Pocket Money encrypted backup."); return; }
 
-              const password = prompt(
-                `This backup holds ${info.transactions} transactions and ${info.categories} categories, ` +
-                `saved ${new Date(info.exportedAt).toLocaleDateString()}.\n\nEnter its password.`
-              );
-              if (!password) return;
-
-              const doc = await importPmVault(text, password);
+              let doc;
+              if (info) {
+                const password = prompt(
+                  `This backup holds ${info.transactions} transactions and ${info.categories} categories, ` +
+                  `saved ${new Date(info.exportedAt).toLocaleDateString()}.\n\nEnter its password.`
+                );
+                if (!password) return;
+                doc = await importPmVault(text, password);
+              } else {
+                // Not a .pmvault: try it as a plain JSON export. This is the
+                // one way data gets IN without encryption — it is stored
+                // encrypted the moment it lands.
+                const plain = readPlainBackup(text);
+                if (!plain) {
+                  toast.error("That file is neither a Pocket Money backup nor a readable JSON export.");
+                  return;
+                }
+                if (!confirm(
+                  `This is an unencrypted JSON file holding ${plain.summary.transactions} transactions ` +
+                  `and ${plain.summary.categories} categories.\n\n` +
+                  "Import it? Once imported it is stored encrypted like the rest of your data."
+                )) return;
+                doc = plain.doc;
+              }
               // Explicit choice: merging a full-dataset backup into populated
               // data produces a confusing hybrid, so say which is happening.
               const replace = confirm(
@@ -204,7 +230,7 @@ function PassphraseSection({
   }
 
   return (
-    <div className="bg-card rounded-2xl border border-hairline shadow-card p-4 space-y-3">
+    <div className="bg-card rounded-card border border-hairline shadow-card p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <KeyRound size={16} className="text-primary flex-shrink-0" />
